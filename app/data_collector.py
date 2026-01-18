@@ -74,79 +74,109 @@ class DataCollector:
             hour = (dt.hour // hours) * hours
             return dt.replace(hour=hour, minute=0, second=0, microsecond=0)
     
-    async def fetch_and_store_trades(self, ticker_id: str, limit: int = 1000) -> int:
+    async def fetch_and_store_trades(self, ticker_id: str, limit: int = 1000, pages: int = 5) -> int:
         """
         Fetch trades from Nado API and store in database
+        
+        Uses pagination to fetch more historical trades.
+        Fetches up to `pages` batches of `limit` trades each.
         
         Returns number of new trades stored
         """
         await self.initialize()
         
+        session = get_session()
+        total_new_trades = 0
+        min_trade_id = None
+        
         try:
-            # Fetch trades from API
-            trades_data = await self.client.get_trades(ticker_id, limit=limit)
-            
-            if not trades_data:
-                logger.warning(f"No trades returned for {ticker_id}")
-                return 0
-            
-            session = get_session()
-            new_trades = 0
-            
-            try:
-                for trade in trades_data:
-                    trade_id = trade.get("trade_id")
-                    if not trade_id:
-                        continue
-                    
-                    # Parse timestamp
-                    ts = trade.get("timestamp", 0)
-                    if ts > 1e10:  # milliseconds
-                        ts = ts / 1000
-                    
-                    try:
-                        trade_dt = datetime.fromtimestamp(ts)
-                    except:
-                        continue
-                    
-                    # Check if trade already exists
-                    existing = session.query(Trade).filter(
-                        and_(Trade.trade_id == trade_id, Trade.ticker_id == ticker_id)
-                    ).first()
-                    
-                    if existing:
-                        continue
-                    
-                    # Create new trade record
-                    new_trade = Trade(
-                        trade_id=trade_id,
-                        ticker_id=ticker_id,
-                        product_id=trade.get("product_id"),
-                        price=float(trade.get("price", 0)),
-                        base_filled=float(trade.get("base_filled", 0)),
-                        quote_filled=float(trade.get("quote_filled", 0)),
-                        trade_type=trade.get("trade_type"),
-                        timestamp=trade_dt
+            for page in range(pages):
+                try:
+                    # Fetch trades from API (with pagination via to_id)
+                    trades_data = await self.client.get_trades(
+                        ticker_id, 
+                        limit=limit,
+                        to_id=min_trade_id  # Get trades older than this ID
                     )
                     
-                    session.add(new_trade)
-                    new_trades += 1
-                
-                session.commit()
-                logger.info(f"Stored {new_trades} new trades for {ticker_id}")
-                
-            except Exception as e:
-                session.rollback()
-                logger.error(f"Error storing trades for {ticker_id}: {e}")
-                raise
-            finally:
-                session.close()
+                    if not trades_data:
+                        logger.info(f"No more trades for {ticker_id} (page {page+1})")
+                        break
+                    
+                    new_trades = 0
+                    page_min_id = None
+                    
+                    for trade in trades_data:
+                        trade_id = trade.get("trade_id")
+                        if not trade_id:
+                            continue
+                        
+                        # Track minimum trade_id for next page
+                        if page_min_id is None or trade_id < page_min_id:
+                            page_min_id = trade_id
+                        
+                        # Parse timestamp
+                        ts = trade.get("timestamp", 0)
+                        if ts > 1e10:  # milliseconds
+                            ts = ts / 1000
+                        
+                        try:
+                            trade_dt = datetime.fromtimestamp(ts)
+                        except:
+                            continue
+                        
+                        # Check if trade already exists
+                        existing = session.query(Trade).filter(
+                            and_(Trade.trade_id == trade_id, Trade.ticker_id == ticker_id)
+                        ).first()
+                        
+                        if existing:
+                            continue
+                        
+                        # Create new trade record
+                        new_trade = Trade(
+                            trade_id=trade_id,
+                            ticker_id=ticker_id,
+                            product_id=trade.get("product_id"),
+                            price=float(trade.get("price", 0)),
+                            base_filled=float(trade.get("base_filled", 0)),
+                            quote_filled=float(trade.get("quote_filled", 0)),
+                            trade_type=trade.get("trade_type"),
+                            timestamp=trade_dt
+                        )
+                        
+                        session.add(new_trade)
+                        new_trades += 1
+                    
+                    session.commit()
+                    total_new_trades += new_trades
+                    
+                    # Set min_trade_id for next page (get older trades)
+                    if page_min_id:
+                        min_trade_id = page_min_id - 1
+                    else:
+                        break
+                    
+                    # If we got fewer trades than limit, we've reached the end
+                    if len(trades_data) < limit:
+                        break
+                    
+                    # Small delay between pages
+                    await asyncio.sleep(0.1)
+                    
+                except Exception as e:
+                    logger.error(f"Error fetching page {page+1} for {ticker_id}: {e}")
+                    break
             
-            return new_trades
+            logger.info(f"Stored {total_new_trades} new trades for {ticker_id} ({pages} pages)")
             
         except Exception as e:
-            logger.error(f"Error fetching trades for {ticker_id}: {e}")
-            return 0
+            session.rollback()
+            logger.error(f"Error storing trades for {ticker_id}: {e}")
+        finally:
+            session.close()
+        
+        return total_new_trades
     
     async def aggregate_trades_to_candles(self, ticker_id: str, timeframe: str = "1h") -> int:
         """
@@ -313,8 +343,8 @@ class DataCollector:
         
         for ticker_id in ticker_ids:
             try:
-                # Fetch and store trades
-                trades_count = await self.fetch_and_store_trades(ticker_id, limit=1000)
+                # Fetch and store trades (10 pages = up to 10K trades for better historical coverage)
+                trades_count = await self.fetch_and_store_trades(ticker_id, limit=1000, pages=10)
                 
                 # Aggregate to all timeframes
                 total_candles = 0

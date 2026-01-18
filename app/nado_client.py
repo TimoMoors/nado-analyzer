@@ -188,17 +188,31 @@ class NadoClient:
     async def get_trades(
         self, 
         ticker_id: str, 
-        limit: int = 100
+        limit: int = 100,
+        to_id: Optional[int] = None,
+        from_id: Optional[int] = None
     ) -> List[Dict[str, Any]]:
         """
         Get recent trades for a symbol
         
         Endpoint: GET /v2/trades?ticker_id={ticker_id}&limit={limit}
+        
+        Pagination:
+        - to_id: Get trades older than this trade_id
+        - from_id: Get trades newer than this trade_id
         """
         try:
+            params = {"ticker_id": ticker_id, "limit": limit}
+            
+            # Add pagination parameters if provided
+            if to_id is not None:
+                params["to_id"] = to_id
+            if from_id is not None:
+                params["from_id"] = from_id
+            
             response = await self.client.get(
                 f"{self.archive_url}/trades",
-                params={"ticker_id": ticker_id, "limit": limit}
+                params=params
             )
             response.raise_for_status()
             return response.json()

@@ -25,6 +25,7 @@ from app.analyzer import get_analyzer, TradingAnalyzer
 from app.data_collector import get_data_collector, DataCollector
 from app.database import init_db
 from app.indicators import calculate_all_indicators, determine_signal_from_indicators
+from app.external_data import seed_historical_data
 
 # Configure logging
 logging.basicConfig(
@@ -52,6 +53,19 @@ async def collect_historical_data():
         
     except Exception as e:
         logger.error(f"Error collecting historical data: {e}")
+
+
+async def seed_external_data():
+    """Seed historical data from CoinGecko for major coins"""
+    logger.info("Seeding historical data from CoinGecko...")
+    
+    try:
+        results = await seed_historical_data(days=7)  # 7 days of hourly data
+        total = sum(results.values())
+        logger.info(f"External data seeding complete. Total candles: {total}")
+        
+    except Exception as e:
+        logger.error(f"Error seeding external data: {e}")
 
 
 async def refresh_data():
@@ -147,8 +161,13 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing database...")
     init_db()
     
-    # Collect historical data on startup
-    logger.info("Collecting initial historical data...")
+    # Seed historical data from CoinGecko (for major coins)
+    # This provides enough data for indicators immediately
+    logger.info("Seeding historical data from external sources...")
+    await seed_external_data()
+    
+    # Collect fresh data from Nado
+    logger.info("Collecting initial historical data from Nado...")
     await collect_historical_data()
     
     # Initial analysis
