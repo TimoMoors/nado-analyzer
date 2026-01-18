@@ -1239,5 +1239,511 @@ body::before {
         width: 95%;
         max-height: 95vh;
     }
+    
+    .timeframe-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .tf-signals-row {
+        flex-wrap: wrap;
+    }
+}
+
+/* ==================== Multi-Timeframe Signals ==================== */
+.timeframe-section {
+    margin-bottom: var(--spacing-xl);
+}
+
+.tf-legend {
+    display: flex;
+    gap: var(--spacing-md);
+    font-size: 0.75rem;
+}
+
+.tf-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-secondary);
+}
+
+.tf-legend-item .tf-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+}
+
+.tf-legend-item.bullish .tf-dot {
+    background: var(--accent-success);
+}
+
+.tf-legend-item.bearish .tf-dot {
+    background: var(--accent-danger);
+}
+
+.tf-legend-item.neutral .tf-dot {
+    background: var(--text-muted);
+}
+
+.timeframe-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    gap: var(--spacing-md);
+}
+
+.tf-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    padding: var(--spacing-md);
+    cursor: pointer;
+    transition: all var(--transition-normal);
+    position: relative;
+}
+
+.tf-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    border-radius: var(--border-radius) var(--border-radius) 0 0;
+    opacity: 0;
+    transition: opacity var(--transition-fast);
+}
+
+.tf-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+}
+
+.tf-card:hover::before {
+    opacity: 1;
+}
+
+.tf-card.bullish::before {
+    background: var(--gradient-success);
+    opacity: 1;
+}
+
+.tf-card.bearish::before {
+    background: var(--gradient-danger);
+    opacity: 1;
+}
+
+.tf-card.neutral::before {
+    background: linear-gradient(135deg, var(--text-muted) 0%, var(--text-secondary) 100%);
+    opacity: 0.5;
+}
+
+.tf-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--spacing-md);
+    padding-bottom: var(--spacing-sm);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.tf-symbol {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+}
+
+.tf-symbol-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--bg-tertiary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    font-weight: 700;
+    color: var(--accent-primary);
+}
+
+.tf-symbol-text {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+.tf-price {
+    text-align: right;
+}
+
+.tf-price-value {
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-size: 0.9rem;
+    display: block;
+}
+
+.tf-price-change {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+}
+
+.tf-price-change.positive {
+    color: var(--accent-success);
+}
+
+.tf-price-change.negative {
+    color: var(--accent-danger);
+}
+
+.tf-signals-row {
+    display: flex;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-md);
+}
+
+.tf-signal {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: var(--spacing-sm);
+    background: var(--bg-tertiary);
+    border-radius: var(--border-radius-sm);
+    text-align: center;
+    min-width: 70px;
+}
+
+.tf-signal-label {
+    font-size: 0.625rem;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.tf-signal-indicator {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.tf-signal-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+}
+
+.tf-signal-dot.bullish {
+    background: var(--accent-success);
+    box-shadow: 0 0 6px var(--accent-success);
+}
+
+.tf-signal-dot.bearish {
+    background: var(--accent-danger);
+    box-shadow: 0 0 6px var(--accent-danger);
+}
+
+.tf-signal-dot.neutral {
+    background: var(--text-muted);
+}
+
+.tf-signal-dot.tbd {
+    background: var(--text-muted);
+    opacity: 0.5;
+}
+
+.tf-signal-text {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.tf-signal.bullish .tf-signal-text {
+    color: var(--accent-success);
+}
+
+.tf-signal.bearish .tf-signal-text {
+    color: var(--accent-danger);
+}
+
+.tf-signal.neutral .tf-signal-text,
+.tf-signal.tbd .tf-signal-text {
+    color: var(--text-muted);
+}
+
+.tf-signal-st {
+    font-size: 0.625rem;
+    font-family: var(--font-mono);
+    color: var(--text-secondary);
+}
+
+.tf-signal-st.bullish {
+    color: var(--accent-success);
+}
+
+.tf-signal-st.bearish {
+    color: var(--accent-danger);
+}
+
+.tf-signal-rsi {
+    font-size: 0.625rem;
+    font-family: var(--font-mono);
+    color: var(--text-muted);
+}
+
+.tf-confluence {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding-top: var(--spacing-sm);
+    border-top: 1px solid var(--border-color);
+    font-size: 0.8125rem;
+}
+
+.tf-confluence-label {
+    color: var(--text-muted);
+}
+
+.tf-confluence-value {
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.tf-confluence-value.bullish {
+    color: var(--accent-success);
+}
+
+.tf-confluence-value.bearish {
+    color: var(--accent-danger);
+}
+
+.tf-confluence-value.neutral {
+    color: var(--text-secondary);
+}
+
+.tf-confluence-count {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+/* Modal detail enhancements for timeframes */
+.detail-price-row {
+    text-align: center;
+    margin-bottom: var(--spacing-lg);
+}
+
+.detail-price-value {
+    font-family: var(--font-mono);
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.detail-confluence-summary {
+    background: var(--bg-tertiary);
+    border-radius: var(--border-radius);
+    padding: var(--spacing-lg);
+    margin-bottom: var(--spacing-lg);
+}
+
+.detail-confluence-summary h3 {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: var(--spacing-md);
+}
+
+.confluence-stats {
+    display: flex;
+    justify-content: space-around;
+    gap: var(--spacing-md);
+}
+
+.confluence-stat {
+    text-align: center;
+    padding: var(--spacing-md);
+    background: var(--bg-card);
+    border-radius: var(--border-radius-sm);
+    min-width: 80px;
+}
+
+.confluence-stat-value {
+    font-family: var(--font-mono);
+    font-size: 1.75rem;
+    font-weight: 700;
+    display: block;
+}
+
+.confluence-stat.bullish .confluence-stat-value {
+    color: var(--accent-success);
+}
+
+.confluence-stat.bearish .confluence-stat-value {
+    color: var(--accent-danger);
+}
+
+.confluence-stat.neutral .confluence-stat-value {
+    color: var(--text-muted);
+}
+
+.confluence-stat-label {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.detail-timeframes {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--spacing-md);
+}
+
+.tf-detail-section {
+    background: var(--bg-tertiary);
+    border-radius: var(--border-radius);
+    padding: var(--spacing-md);
+    border-left: 3px solid var(--text-muted);
+}
+
+.tf-detail-section.bullish {
+    border-left-color: var(--accent-success);
+}
+
+.tf-detail-section.bearish {
+    border-left-color: var(--accent-danger);
+}
+
+.tf-detail-section.tbd {
+    opacity: 0.6;
+}
+
+.tf-detail-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--spacing-md);
+}
+
+.tf-detail-title {
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+
+.tf-detail-badge {
+    padding: 4px 8px;
+    border-radius: var(--border-radius-sm);
+    font-size: 0.6875rem;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.tf-detail-badge.bullish {
+    background: rgba(16, 185, 129, 0.2);
+    color: var(--accent-success);
+}
+
+.tf-detail-badge.bearish {
+    background: rgba(239, 68, 68, 0.2);
+    color: var(--accent-danger);
+}
+
+.tf-detail-badge.neutral {
+    background: rgba(148, 163, 184, 0.2);
+    color: var(--text-secondary);
+}
+
+.tf-detail-badge.tbd {
+    background: rgba(100, 116, 139, 0.2);
+    color: var(--text-muted);
+}
+
+.tf-detail-signal {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+}
+
+.tf-detail-reason {
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+    font-style: italic;
+}
+
+.tf-detail-indicators {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-md);
+}
+
+.tf-indicator {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 8px;
+    background: var(--bg-card);
+    border-radius: var(--border-radius-sm);
+}
+
+.tf-indicator-label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.tf-indicator-value {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.tf-indicator-value.bullish {
+    color: var(--accent-success);
+}
+
+.tf-indicator-value.bearish {
+    color: var(--accent-danger);
+}
+
+.tf-detail-reasons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: var(--spacing-sm);
+}
+
+.tf-reason {
+    padding: 4px 8px;
+    background: var(--bg-card);
+    border-radius: var(--border-radius-sm);
+    font-size: 0.6875rem;
+    color: var(--text-secondary);
+}
+
+.tf-detail-meta {
+    display: flex;
+    justify-content: space-between;
+    padding-top: var(--spacing-sm);
+    border-top: 1px solid var(--border-color);
+}
+
+.tf-meta-item {
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    color: var(--text-muted);
+}
+
+@media (max-width: 768px) {
+    .detail-timeframes {
+        grid-template-columns: 1fr;
+    }
+    
+    .tf-detail-indicators {
+        grid-template-columns: 1fr;
+    }
 }
 

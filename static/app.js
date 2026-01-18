@@ -67,6 +67,18 @@ const API = {
         const response = await fetch(`${this.baseUrl}/api/database/collect`, { method: 'POST' });
         if (!response.ok) throw new Error('Failed to trigger data collection');
         return response.json();
+    },
+    
+    async fetchMultiTimeframeSignals() {
+        const response = await fetch(`${this.baseUrl}/api/signals`);
+        if (!response.ok) throw new Error('Failed to fetch multi-timeframe signals');
+        return response.json();
+    },
+    
+    async fetchSignalDetail(symbol) {
+        const response = await fetch(`${this.baseUrl}/api/signals/${symbol}`);
+        if (!response.ok) throw new Error('Failed to fetch signal detail');
+        return response.json();
     }
 };
 
@@ -548,6 +560,200 @@ const UI = {
         if (el) {
             el.textContent = `Updated: ${Utils.formatTime(timestamp)}`;
         }
+    },
+    
+    // Multi-Timeframe Signals Grid
+    renderTimeframeCard(market) {
+        const baseAsset = market.ticker_id?.replace('-PERP_USDT0', '').replace('USDT0', '') || '??';
+        const overallClass = this.getOverallSignalClass(market.overall_signal);
+        
+        return `
+            <div class="tf-card ${overallClass}" data-symbol="${market.ticker_id}" onclick="App.showSignalDetail('${market.ticker_id}')">
+                <div class="tf-card-header">
+                    <div class="tf-symbol">
+                        <div class="tf-symbol-icon">${baseAsset.slice(0, 3)}</div>
+                        <span class="tf-symbol-text">${market.ticker_id}</span>
+                    </div>
+                    <div class="tf-price">
+                        <span class="tf-price-value">${Utils.formatPrice(market.current_price)}</span>
+                        <span class="tf-price-change ${market.price_change_24h >= 0 ? 'positive' : 'negative'}">${Utils.formatPercent(market.price_change_24h)}</span>
+                    </div>
+                </div>
+                
+                <div class="tf-signals-row">
+                    ${this.renderTimeframeSignal('1H', market.timeframes?.['1h'])}
+                    ${this.renderTimeframeSignal('4H', market.timeframes?.['4h'])}
+                    ${this.renderTimeframeSignal('12H', market.timeframes?.['12h'])}
+                    ${this.renderTimeframeSignal('1D', market.timeframes?.['1d'])}
+                </div>
+                
+                <div class="tf-confluence">
+                    <span class="tf-confluence-label">Confluence:</span>
+                    <span class="tf-confluence-value ${overallClass}">${market.overall_signal?.replace('_', ' ') || 'neutral'}</span>
+                    <span class="tf-confluence-count">(${market.bullish_count || 0}↑ ${market.bearish_count || 0}↓)</span>
+                </div>
+            </div>
+        `;
+    },
+    
+    renderTimeframeSignal(label, data) {
+        if (!data || data.signal === 'tbd') {
+            return `
+                <div class="tf-signal tbd">
+                    <span class="tf-signal-label">${label}</span>
+                    <span class="tf-signal-indicator">
+                        <span class="tf-signal-dot tbd"></span>
+                        <span class="tf-signal-text">tbd</span>
+                    </span>
+                    <span class="tf-signal-st">ST: tbd</span>
+                </div>
+            `;
+        }
+        
+        const signalClass = data.signal || 'neutral';
+        const stClass = data.supertrend || 'tbd';
+        const rsiValue = data.rsi != null ? data.rsi.toFixed(0) : 'tbd';
+        
+        return `
+            <div class="tf-signal ${signalClass}">
+                <span class="tf-signal-label">${label}</span>
+                <span class="tf-signal-indicator">
+                    <span class="tf-signal-dot ${signalClass}"></span>
+                    <span class="tf-signal-text">${signalClass}</span>
+                </span>
+                <span class="tf-signal-st ${stClass}">ST: ${stClass}</span>
+                <span class="tf-signal-rsi">RSI: ${rsiValue}</span>
+            </div>
+        `;
+    },
+    
+    getOverallSignalClass(signal) {
+        if (!signal) return 'neutral';
+        if (signal.includes('bullish')) return 'bullish';
+        if (signal.includes('bearish')) return 'bearish';
+        return 'neutral';
+    },
+    
+    updateTimeframeGrid(signals) {
+        const container = document.getElementById('timeframe-grid');
+        if (!container) return;
+        
+        if (!signals || signals.length === 0) {
+            container.innerHTML = '<p style="color: var(--text-muted); padding: 20px;">Loading multi-timeframe signals...</p>';
+            return;
+        }
+        
+        // Sort by confluence strength
+        const sorted = signals.sort((a, b) => {
+            const aStrength = Math.abs((a.bullish_count || 0) - (a.bearish_count || 0));
+            const bStrength = Math.abs((b.bullish_count || 0) - (b.bearish_count || 0));
+            return bStrength - aStrength;
+        });
+        
+        container.innerHTML = sorted.map(s => this.renderTimeframeCard(s)).join('');
+    },
+    
+    // Render detail modal with timeframe signals
+    renderSignalDetailModal(signalData) {
+        const baseAsset = signalData.ticker_id?.replace('-PERP_USDT0', '').replace('USDT0', '') || '??';
+        const overallClass = this.getOverallSignalClass(signalData.confluence?.overall_signal);
+        
+        return `
+            <div class="detail-header">
+                <div class="detail-symbol">
+                    <div class="detail-symbol-icon">${baseAsset.slice(0, 3)}</div>
+                    <span class="detail-symbol-name">${signalData.ticker_id}</span>
+                </div>
+                <span class="detail-signal setup-badge ${overallClass}">${signalData.confluence?.overall_signal?.replace('_', ' ') || 'neutral'}</span>
+            </div>
+            
+            <div class="detail-price-row">
+                <span class="detail-price-value">${Utils.formatPrice(signalData.current_price)}</span>
+            </div>
+            
+            <div class="detail-confluence-summary">
+                <h3>Confluence Analysis</h3>
+                <div class="confluence-stats">
+                    <div class="confluence-stat bullish">
+                        <span class="confluence-stat-value">${signalData.confluence?.bullish_count || 0}</span>
+                        <span class="confluence-stat-label">Bullish</span>
+                    </div>
+                    <div class="confluence-stat bearish">
+                        <span class="confluence-stat-value">${signalData.confluence?.bearish_count || 0}</span>
+                        <span class="confluence-stat-label">Bearish</span>
+                    </div>
+                    <div class="confluence-stat neutral">
+                        <span class="confluence-stat-value">${signalData.confluence?.neutral_count || 0}</span>
+                        <span class="confluence-stat-label">Neutral</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="detail-timeframes">
+                ${this.renderTimeframeDetail('1 Hour', signalData.timeframes?.['1h'])}
+                ${this.renderTimeframeDetail('4 Hours', signalData.timeframes?.['4h'])}
+                ${this.renderTimeframeDetail('12 Hours', signalData.timeframes?.['12h'])}
+                ${this.renderTimeframeDetail('Daily', signalData.timeframes?.['1d'])}
+            </div>
+        `;
+    },
+    
+    renderTimeframeDetail(label, data) {
+        if (!data || data.signal === 'tbd') {
+            return `
+                <div class="tf-detail-section tbd">
+                    <h4 class="tf-detail-title">${label}</h4>
+                    <div class="tf-detail-signal">
+                        <span class="tf-detail-badge tbd">tbd</span>
+                        <span class="tf-detail-reason">Insufficient data for analysis</span>
+                    </div>
+                </div>
+            `;
+        }
+        
+        const signalClass = data.signal || 'neutral';
+        const indicators = data.indicators || {};
+        
+        return `
+            <div class="tf-detail-section ${signalClass}">
+                <div class="tf-detail-header">
+                    <h4 class="tf-detail-title">${label}</h4>
+                    <span class="tf-detail-badge ${signalClass}">${data.signal}</span>
+                </div>
+                
+                <div class="tf-detail-indicators">
+                    <div class="tf-indicator">
+                        <span class="tf-indicator-label">Supertrend</span>
+                        <span class="tf-indicator-value ${indicators.supertrend_trend || 'tbd'}">${indicators.supertrend_trend || 'tbd'}</span>
+                    </div>
+                    <div class="tf-indicator">
+                        <span class="tf-indicator-label">RSI (14)</span>
+                        <span class="tf-indicator-value">${indicators.rsi_14 != null ? indicators.rsi_14.toFixed(1) : 'tbd'}</span>
+                    </div>
+                    <div class="tf-indicator">
+                        <span class="tf-indicator-label">MACD</span>
+                        <span class="tf-indicator-value ${indicators.macd > (indicators.macd_signal || 0) ? 'bullish' : 'bearish'}">${indicators.macd != null ? indicators.macd.toFixed(4) : 'tbd'}</span>
+                    </div>
+                    <div class="tf-indicator">
+                        <span class="tf-indicator-label">EMA 9/21</span>
+                        <span class="tf-indicator-value ${indicators.ema_9 > (indicators.ema_21 || 0) ? 'bullish' : 'bearish'}">
+                            ${indicators.ema_9 != null && indicators.ema_21 != null ? (indicators.ema_9 > indicators.ema_21 ? '↑ Bullish' : '↓ Bearish') : 'tbd'}
+                        </span>
+                    </div>
+                </div>
+                
+                ${data.reasons?.length ? `
+                <div class="tf-detail-reasons">
+                    ${data.reasons.map(r => `<span class="tf-reason">${r}</span>`).join('')}
+                </div>
+                ` : ''}
+                
+                <div class="tf-detail-meta">
+                    <span class="tf-meta-item">Candles: ${indicators.candle_count || 0}</span>
+                    <span class="tf-meta-item">Score: ${data.score || 0}</span>
+                </div>
+            </div>
+        `;
     }
 };
 
@@ -559,11 +765,14 @@ const App = {
         this.setupEventListeners();
         await this.loadData();
         await this.loadDatabaseStats();
+        await this.loadMultiTimeframeSignals();
         
         // Refresh data every 60 seconds
         setInterval(() => this.loadData(), 60000);
         // Refresh database stats every 30 seconds
         setInterval(() => this.loadDatabaseStats(), 30000);
+        // Refresh multi-timeframe signals every 60 seconds
+        setInterval(() => this.loadMultiTimeframeSignals(), 60000);
     },
     
     setupEventListeners() {
@@ -738,6 +947,7 @@ const App = {
             await API.triggerDataCollection();
             await this.loadDatabaseStats();
             await this.loadData();
+            await this.loadMultiTimeframeSignals();
             UI.showToast('Data collection complete!', 'success');
         } catch (error) {
             console.error('Failed to collect data:', error);
@@ -747,6 +957,27 @@ const App = {
                 btn.classList.remove('loading');
                 btn.disabled = false;
             }
+        }
+    },
+    
+    async loadMultiTimeframeSignals() {
+        try {
+            const signals = await API.fetchMultiTimeframeSignals();
+            UI.updateTimeframeGrid(signals);
+        } catch (error) {
+            console.error('Failed to load multi-timeframe signals:', error);
+            // Don't show toast for this - it's a background refresh
+        }
+    },
+    
+    async showSignalDetail(symbol) {
+        try {
+            const signalData = await API.fetchSignalDetail(symbol);
+            const html = UI.renderSignalDetailModal(signalData);
+            UI.showModal(html);
+        } catch (error) {
+            console.error('Failed to load signal detail:', error);
+            UI.showToast('Failed to load signal details', 'error');
         }
     }
 };

@@ -19,11 +19,12 @@ from fastapi.responses import FileResponse
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.config import get_settings
-from app.models import TradingSetup, MarketData, MarketSummary, TradingSignal, SetupQuality
+from app.models import TradingSetup, MarketData, MarketSummary, TradingSignal, SetupQuality, OHLCV
 from app.nado_client import get_nado_client, NadoClient
 from app.analyzer import get_analyzer, TradingAnalyzer
 from app.data_collector import get_data_collector, DataCollector
 from app.database import init_db
+from app.indicators import calculate_all_indicators, determine_signal_from_indicators
 
 # Configure logging
 logging.basicConfig(
@@ -498,6 +499,224 @@ async def get_candles(
             for c in candles
         ]
     }
+
+
+@app.get("/api/signals/{ticker_id}")
+async def get_multi_timeframe_signals(ticker_id: str):
+    """
+    Get trading signals for all timeframes (1h, 4h, 12h, 1d) for a specific market
+    
+    Returns indicators and signal for each timeframe:
+    - RSI, MACD, Supertrend
+    - Signal: bullish, bearish, or neutral
+    - Confluence score across timeframes
+    """
+    collector = get_data_collector()
+    ticker_id = ticker_id.upper()
+    timeframes = ["1h", "4h", "12h", "1d"]
+    
+    # Get current price from cached setups
+    current_price = 0.0
+    setup = next((s for s in _cached_setups if s.symbol == ticker_id), None)
+    if setup:
+        current_price = setup.market_data.last_price
+    
+    result = {
+        "ticker_id": ticker_id,
+        "current_price": current_price,
+        "timeframes": {},
+        "confluence": {
+            "bullish_count": 0,
+            "bearish_count": 0,
+            "neutral_count": 0,
+            "overall_signal": "neutral",
+            "score": 0
+        }
+    }
+    
+    bullish_count = 0
+    bearish_count = 0
+    neutral_count = 0
+    total_score = 0
+    
+    for tf in timeframes:
+        candles = collector.get_candles(ticker_id, tf, limit=100)
+        
+        if not candles:
+            result["timeframes"][tf] = {
+                "signal": "tbd",
+                "score": 0,
+                "reasons": ["Insufficient data"],
+                "indicators": {
+                    "rsi_14": None,
+                    "macd": None,
+                    "macd_signal": None,
+                    "supertrend": None,
+                    "supertrend_trend": "tbd",
+                    "ema_9": None,
+                    "ema_21": None,
+                    "candle_count": 0
+                }
+            }
+            continue
+        
+        # Convert candles to OHLCV format
+        ohlcv_data = [
+            OHLCV(
+                timestamp=c.timestamp,
+                open=c.open,
+                high=c.high,
+                low=c.low,
+                close=c.close,
+                volume=c.volume
+            )
+            for c in candles
+        ]
+        
+        # Calculate indicators
+        indicators = calculate_all_indicators(ohlcv_data)
+        
+        # Determine signal
+        signal_data = determine_signal_from_indicators(indicators, current_price)
+        
+        result["timeframes"][tf] = {
+            "signal": signal_data["signal"],
+            "score": signal_data["score"],
+            "reasons": signal_data["reasons"],
+            "indicators": {
+                "rsi_14": indicators.get("rsi_14"),
+                "macd": indicators.get("macd"),
+                "macd_signal": indicators.get("macd_signal"),
+                "macd_histogram": indicators.get("macd_histogram"),
+                "supertrend": indicators.get("supertrend"),
+                "supertrend_direction": indicators.get("supertrend_direction"),
+                "supertrend_trend": indicators.get("supertrend_trend"),
+                "ema_9": indicators.get("ema_9"),
+                "ema_21": indicators.get("ema_21"),
+                "sma_20": indicators.get("sma_20"),
+                "bb_upper": indicators.get("bb_upper"),
+                "bb_lower": indicators.get("bb_lower"),
+                "atr_14": indicators.get("atr_14"),
+                "candle_count": indicators.get("candle_count", 0)
+            }
+        }
+        
+        # Count for confluence
+        if signal_data["signal"] == "bullish":
+            bullish_count += 1
+            total_score += signal_data["score"]
+        elif signal_data["signal"] == "bearish":
+            bearish_count += 1
+            total_score -= abs(signal_data["score"])
+        else:
+            neutral_count += 1
+    
+    # Calculate confluence
+    result["confluence"]["bullish_count"] = bullish_count
+    result["confluence"]["bearish_count"] = bearish_count
+    result["confluence"]["neutral_count"] = neutral_count
+    result["confluence"]["score"] = total_score
+    
+    if bullish_count >= 3:
+        result["confluence"]["overall_signal"] = "strong_bullish"
+    elif bullish_count >= 2 and bearish_count == 0:
+        result["confluence"]["overall_signal"] = "bullish"
+    elif bearish_count >= 3:
+        result["confluence"]["overall_signal"] = "strong_bearish"
+    elif bearish_count >= 2 and bullish_count == 0:
+        result["confluence"]["overall_signal"] = "bearish"
+    else:
+        result["confluence"]["overall_signal"] = "neutral"
+    
+    return result
+
+
+@app.get("/api/signals")
+async def get_all_multi_timeframe_signals():
+    """
+    Get multi-timeframe signals for all markets
+    
+    Returns a summary of signals across all timeframes for each market
+    """
+    collector = get_data_collector()
+    timeframes = ["1h", "4h", "12h", "1d"]
+    
+    results = []
+    
+    for setup in _cached_setups:
+        ticker_id = setup.symbol
+        current_price = setup.market_data.last_price
+        
+        market_signals = {
+            "ticker_id": ticker_id,
+            "current_price": current_price,
+            "price_change_24h": setup.market_data.price_change_percent_24h,
+            "timeframes": {}
+        }
+        
+        bullish_count = 0
+        bearish_count = 0
+        
+        for tf in timeframes:
+            candles = collector.get_candles(ticker_id, tf, limit=100)
+            
+            if not candles or len(candles) < 10:
+                market_signals["timeframes"][tf] = {
+                    "signal": "tbd",
+                    "supertrend": "tbd"
+                }
+                continue
+            
+            # Convert candles to OHLCV format
+            ohlcv_data = [
+                OHLCV(
+                    timestamp=c.timestamp,
+                    open=c.open,
+                    high=c.high,
+                    low=c.low,
+                    close=c.close,
+                    volume=c.volume
+                )
+                for c in candles
+            ]
+            
+            # Calculate indicators
+            indicators = calculate_all_indicators(ohlcv_data)
+            signal_data = determine_signal_from_indicators(indicators, current_price)
+            
+            market_signals["timeframes"][tf] = {
+                "signal": signal_data["signal"],
+                "supertrend": indicators.get("supertrend_trend", "tbd"),
+                "rsi": indicators.get("rsi_14"),
+                "score": signal_data["score"]
+            }
+            
+            if signal_data["signal"] == "bullish":
+                bullish_count += 1
+            elif signal_data["signal"] == "bearish":
+                bearish_count += 1
+        
+        # Overall confluence
+        if bullish_count >= 3:
+            market_signals["overall_signal"] = "strong_bullish"
+        elif bullish_count >= 2 and bearish_count == 0:
+            market_signals["overall_signal"] = "bullish"
+        elif bearish_count >= 3:
+            market_signals["overall_signal"] = "strong_bearish"
+        elif bearish_count >= 2 and bullish_count == 0:
+            market_signals["overall_signal"] = "bearish"
+        else:
+            market_signals["overall_signal"] = "neutral"
+        
+        market_signals["bullish_count"] = bullish_count
+        market_signals["bearish_count"] = bearish_count
+        
+        results.append(market_signals)
+    
+    # Sort by confluence (most bullish or bearish first)
+    results.sort(key=lambda x: abs(x.get("bullish_count", 0) - x.get("bearish_count", 0)), reverse=True)
+    
+    return results
 
 
 # ==================== Static Files (Frontend) ====================
