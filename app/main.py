@@ -162,16 +162,24 @@ async def lifespan(app: FastAPI):
         id='refresh_data'
     )
     
-    # Collect historical data every 5 minutes
+    # Collect historical data every hour (on the hour)
+    scheduler.add_job(
+        collect_historical_data,
+        'cron',
+        minute=0,  # Run at the start of every hour
+        id='collect_data_hourly'
+    )
+    
+    # Also collect every 15 minutes for faster initial data buildup
     scheduler.add_job(
         collect_historical_data,
         'interval',
-        minutes=5,
-        id='collect_data'
+        minutes=15,
+        id='collect_data_interval'
     )
     
     scheduler.start()
-    logger.info(f"Scheduler started. Analysis refresh: {settings.data_refresh_interval}s, Data collection: 5min")
+    logger.info(f"Scheduler started. Analysis: {settings.data_refresh_interval}s, Data collection: every hour + every 15min")
     
     yield
     

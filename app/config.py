@@ -16,13 +16,16 @@ class Settings(BaseSettings):
     # Data refresh interval in seconds
     data_refresh_interval: int = 60
     
-    # Database
+    # Database (use /data for persistent storage on Railway/Render)
     database_url: str = "sqlite+aiosqlite:///./nado_data.db"
     
     # Server
     host: str = "0.0.0.0"
     port: int = 8000
-    debug: bool = True
+    debug: bool = False  # Set to False for production
+    
+    # Environment
+    environment: str = "development"  # "development" or "production"
     
     # Trading Setup Thresholds
     rsi_oversold: float = 30.0
