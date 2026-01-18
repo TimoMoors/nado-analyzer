@@ -142,9 +142,40 @@ _AsyncSessionLocal = None
 
 
 def get_database_url() -> str:
-    """Get database URL from settings"""
+    """
+    Get database URL from settings
+    
+    Handles both SQLite (local) and PostgreSQL (production)
+    Render provides postgres:// but SQLAlchemy needs postgresql://
+    """
+    import os
+    
+    # Check for DATABASE_URL environment variable (Render sets this)
+    db_url = os.environ.get("DATABASE_URL")
+    
+    if db_url:
+        # Render uses postgres:// but SQLAlchemy needs postgresql://
+        if db_url.startswith("postgres://"):
+            db_url = db_url.replace("postgres://", "postgresql://", 1)
+        return db_url
+    
+    # Fall back to settings (local development)
     settings = get_settings()
     return settings.database_url
+
+
+def get_async_database_url() -> str:
+    """Get async-compatible database URL"""
+    db_url = get_database_url()
+    
+    if "postgresql://" in db_url:
+        # Use asyncpg for PostgreSQL
+        return db_url.replace("postgresql://", "postgresql+asyncpg://")
+    elif "sqlite" in db_url and "aiosqlite" not in db_url:
+        # Use aiosqlite for SQLite
+        return db_url.replace("sqlite://", "sqlite+aiosqlite://")
+    
+    return db_url
 
 
 def init_db():
@@ -153,14 +184,18 @@ def init_db():
     
     db_url = get_database_url()
     
-    # For sync operations (use sqlite without async)
-    sync_url = db_url.replace("+aiosqlite", "")
+    # For sync operations - remove async drivers
+    sync_url = db_url.replace("+aiosqlite", "").replace("+asyncpg", "")
+    
     _engine = create_engine(sync_url, echo=False)
     _SessionLocal = sessionmaker(bind=_engine)
     
     # Create all tables
     Base.metadata.create_all(bind=_engine)
-    logger.info(f"Database initialized: {sync_url}")
+    
+    # Log without exposing credentials
+    safe_url = sync_url.split("@")[-1] if "@" in sync_url else sync_url
+    logger.info(f"Database initialized: ...{safe_url}")
 
 
 async def init_async_db():

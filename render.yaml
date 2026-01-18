@@ -1,4 +1,9 @@
 # Render Blueprint - https://render.com/docs/blueprint-spec
+databases:
+  - name: nado-db
+    databaseName: nado
+    plan: free  # Free PostgreSQL (90 day limit) or starter for persistent
+
 services:
   - type: web
     name: nado-analyzer
@@ -10,6 +15,12 @@ services:
         value: 3.11.7
       - key: DATA_REFRESH_INTERVAL
         value: 60
+      - key: DATABASE_URL
+        fromDatabase:
+          name: nado-db
+          property: connectionString
+      - key: ENVIRONMENT
+        value: production
     autoDeploy: true
-    plan: free  # or starter for more resources
+    plan: starter  # Always-on for continuous data collection
 

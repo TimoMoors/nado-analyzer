@@ -16,7 +16,9 @@ class Settings(BaseSettings):
     # Data refresh interval in seconds
     data_refresh_interval: int = 60
     
-    # Database (use /data for persistent storage on Railway/Render)
+    # Database 
+    # For local development: sqlite+aiosqlite:///./nado_data.db
+    # For production (Render): Set DATABASE_URL env var to PostgreSQL connection string
     database_url: str = "sqlite+aiosqlite:///./nado_data.db"
     
     # Server
