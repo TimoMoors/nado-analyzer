@@ -509,6 +509,86 @@ async def trigger_seed():
     }
 
 
+@app.get("/api/test/binance")
+async def test_binance_fetch():
+    """
+    Test direct Binance API fetch (for debugging)
+    """
+    import httpx
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                "https://api.binance.com/api/v3/klines",
+                params={"symbol": "BTCUSDT", "interval": "1h", "limit": 10}
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            return {
+                "status": "success",
+                "candles_fetched": len(data),
+                "first_candle": {
+                    "timestamp": data[0][0] if data else None,
+                    "open": data[0][1] if data else None,
+                    "close": data[0][4] if data else None
+                } if data else None,
+                "last_candle": {
+                    "timestamp": data[-1][0] if data else None,
+                    "open": data[-1][1] if data else None,
+                    "close": data[-1][4] if data else None
+                } if data else None
+            }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "error_type": type(e).__name__
+        }
+
+
+@app.post("/api/test/seed-btc")
+async def test_seed_btc():
+    """
+    Test seeding just BTC (for debugging)
+    """
+    from app.external_data import fetch_binance_klines, store_external_candles, aggregate_and_store_higher_timeframes
+    
+    results = {}
+    
+    try:
+        # Fetch from Binance
+        ohlcv = await fetch_binance_klines("BTCUSDT", interval="1h", limit=200)
+        results["fetched_candles"] = len(ohlcv)
+        
+        if ohlcv:
+            results["first_candle"] = ohlcv[0]
+            results["last_candle"] = ohlcv[-1]
+            
+            # Try to store
+            stored_1h = store_external_candles("BTC-PERP_USDT0", ohlcv, "1h")
+            results["stored_1h"] = stored_1h
+            
+            # Aggregate to higher TFs
+            stored_higher = aggregate_and_store_higher_timeframes("BTC-PERP_USDT0", ohlcv)
+            results["stored_higher_tf"] = stored_higher
+        
+        # Check final count
+        collector = get_data_collector()
+        btc_candles = collector.get_candles("BTC-PERP_USDT0", "1h", 200)
+        results["final_1h_count"] = len(btc_candles)
+        
+        return {"status": "success", "results": results}
+        
+    except Exception as e:
+        import traceback
+        return {
+            "status": "error", 
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
+
+
 @app.post("/api/database/collect")
 async def trigger_data_collection():
     """
