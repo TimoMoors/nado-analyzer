@@ -56,16 +56,22 @@ async def collect_historical_data():
 
 
 async def seed_external_data():
-    """Seed historical data from CoinGecko for major coins"""
-    logger.info("Seeding historical data from CoinGecko...")
+    """Seed historical data from Binance for major coins"""
+    logger.info("Seeding historical data from Binance...")
     
     try:
-        results = await seed_historical_data(days=7)  # 7 days of hourly data
-        total = sum(results.values())
-        logger.info(f"External data seeding complete. Total candles: {total}")
+        results = await seed_historical_data(days=7)
+        total_1h = sum(v for k, v in results.items() if not k.endswith("_4h"))
+        total_higher = sum(v for k, v in results.items() if k.endswith("_4h"))
+        logger.info(f"External data seeding complete. 1h candles: {total_1h}, Higher TF: {total_higher}")
+        
+        # Log individual results
+        for ticker, count in sorted(results.items()):
+            if count > 0 and not ticker.endswith("_4h"):
+                logger.info(f"  {ticker}: {count} candles seeded")
         
     except Exception as e:
-        logger.error(f"Error seeding external data: {e}")
+        logger.error(f"Error seeding external data: {e}", exc_info=True)
 
 
 async def refresh_data():
@@ -457,6 +463,50 @@ async def get_database_stats():
     collector = get_data_collector()
     stats = collector.get_database_stats()
     return stats
+
+
+@app.get("/api/database/info")
+async def get_database_info():
+    """
+    Get database connection info (for debugging)
+    """
+    import os
+    from app.database import get_database_url
+    
+    db_url = get_database_url()
+    is_postgres = "postgresql" in db_url
+    is_sqlite = "sqlite" in db_url
+    
+    # Don't expose full URL with credentials
+    if "@" in db_url:
+        safe_url = "postgresql://***@" + db_url.split("@")[-1]
+    else:
+        safe_url = db_url
+    
+    return {
+        "database_type": "PostgreSQL" if is_postgres else "SQLite",
+        "connection": safe_url,
+        "env_var_set": os.environ.get("DATABASE_URL") is not None,
+        "persistent": is_postgres,  # SQLite on Render is NOT persistent
+        "note": "PostgreSQL is persistent, SQLite resets on each deploy" if not is_postgres else "Using persistent PostgreSQL"
+    }
+
+
+@app.post("/api/database/seed")
+async def trigger_seed():
+    """
+    Manually trigger historical data seeding from Binance
+    """
+    await seed_external_data()
+    
+    collector = get_data_collector()
+    stats = collector.get_database_stats()
+    
+    return {
+        "status": "seeding_complete",
+        "timestamp": datetime.utcnow().isoformat(),
+        "stats": stats
+    }
 
 
 @app.post("/api/database/collect")
