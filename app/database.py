@@ -12,10 +12,16 @@ No mock data - only real trades aggregated into candles.
 from datetime import datetime
 from typing import Optional, List
 from sqlalchemy import Column, Integer, String, Float, DateTime, UniqueConstraint, Index, create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from sqlalchemy.orm import sessionmaker, declarative_base
 import logging
+import os
+
+# Async imports - optional for PostgreSQL
+try:
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+    ASYNC_AVAILABLE = True
+except ImportError:
+    ASYNC_AVAILABLE = False
 
 from app.config import get_settings
 
