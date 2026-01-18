@@ -1,7 +1,7 @@
 """
 External Data Sources
 
-Uses CoinGecko's free API to fetch historical OHLCV data
+Uses Binance's public API to fetch historical OHLCV data
 for major cryptocurrencies to supplement Nado's limited historical data.
 
 This provides enough data for indicator calculations when Nado
@@ -18,131 +18,72 @@ from app.database import Candle, get_session
 
 logger = logging.getLogger(__name__)
 
-# Map Nado ticker to CoinGecko IDs
-COINGECKO_ID_MAP = {
-    "BTC-PERP_USDT0": "bitcoin",
-    "ETH-PERP_USDT0": "ethereum",
-    "SOL-PERP_USDT0": "solana",
-    "BNB-PERP_USDT0": "binancecoin",
-    "XRP-PERP_USDT0": "ripple",
-    "SUI-PERP_USDT0": "sui",
-    "AAVE-PERP_USDT0": "aave",
-    "TAO-PERP_USDT0": "bittensor",
-    "PENGU-PERP_USDT0": "pudgy-penguins",
-    "HYPE-PERP_USDT0": "hyperliquid",
-    "XMR-PERP_USDT0": "monero",
-    "ZEC-PERP_USDT0": "zcash",
+# Map Nado ticker to Binance symbols
+BINANCE_SYMBOL_MAP = {
+    "BTC-PERP_USDT0": "BTCUSDT",
+    "ETH-PERP_USDT0": "ETHUSDT",
+    "SOL-PERP_USDT0": "SOLUSDT",
+    "BNB-PERP_USDT0": "BNBUSDT",
+    "XRP-PERP_USDT0": "XRPUSDT",
+    "SUI-PERP_USDT0": "SUIUSDT",
+    "AAVE-PERP_USDT0": "AAVEUSDT",
+    "TAO-PERP_USDT0": "TAOUSDT",
+    "PENGU-PERP_USDT0": "PENGUUSDT",
+    "HYPE-PERP_USDT0": "HYPEUSDT",
+    "XMR-PERP_USDT0": "XMRUSDT",
+    "ZEC-PERP_USDT0": "ZECUSDT",
+    "LIT-PERP_USDT0": "LITUSDT",
 }
 
-# CoinGecko free API rate limit: 10-30 calls/minute
-# We'll be conservative with delays
-COINGECKO_API_URL = "https://api.coingecko.com/api/v3"
+BINANCE_API_URL = "https://api.binance.com/api/v3"
 
 
-async def fetch_coingecko_ohlcv(
-    coingecko_id: str,
-    days: int = 7,
-    vs_currency: str = "usd"
+async def fetch_binance_klines(
+    symbol: str,
+    interval: str = "1h",
+    limit: int = 200
 ) -> List[Dict[str, Any]]:
     """
-    Fetch OHLCV data from CoinGecko
+    Fetch OHLCV klines from Binance
     
-    CoinGecko provides market_chart data with:
-    - prices: [[timestamp, price], ...]
-    - market_caps: [[timestamp, cap], ...]
-    - total_volumes: [[timestamp, volume], ...]
-    
-    For hourly data, use days <= 90
+    Binance kline format:
+    [
+      open_time, open, high, low, close, volume,
+      close_time, quote_volume, trades, taker_buy_base, taker_buy_quote, ignore
+    ]
     """
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
-            # For hourly data, use OHLC endpoint
             response = await client.get(
-                f"{COINGECKO_API_URL}/coins/{coingecko_id}/ohlc",
+                f"{BINANCE_API_URL}/klines",
                 params={
-                    "vs_currency": vs_currency,
-                    "days": days
+                    "symbol": symbol,
+                    "interval": interval,
+                    "limit": limit
                 }
             )
             response.raise_for_status()
             data = response.json()
             
-            # OHLC returns: [[timestamp, open, high, low, close], ...]
             ohlcv_data = []
             for candle in data:
-                if len(candle) >= 5:
-                    ohlcv_data.append({
-                        "timestamp": candle[0] / 1000,  # Convert ms to seconds
-                        "open": candle[1],
-                        "high": candle[2],
-                        "low": candle[3],
-                        "close": candle[4],
-                        "volume": 0  # OHLC endpoint doesn't include volume
-                    })
+                ohlcv_data.append({
+                    "timestamp": candle[0] / 1000,  # Convert ms to seconds
+                    "open": float(candle[1]),
+                    "high": float(candle[2]),
+                    "low": float(candle[3]),
+                    "close": float(candle[4]),
+                    "volume": float(candle[5])
+                })
             
-            logger.info(f"Fetched {len(ohlcv_data)} OHLCV candles from CoinGecko for {coingecko_id}")
+            logger.info(f"Fetched {len(ohlcv_data)} klines from Binance for {symbol}")
             return ohlcv_data
             
         except httpx.HTTPStatusError as e:
-            logger.error(f"CoinGecko API error for {coingecko_id}: {e}")
+            logger.warning(f"Binance API error for {symbol}: {e}")
             return []
         except Exception as e:
-            logger.error(f"Error fetching CoinGecko data for {coingecko_id}: {e}")
-            return []
-
-
-async def get_coingecko_market_chart(
-    coingecko_id: str,
-    days: int = 7,
-    vs_currency: str = "usd"
-) -> List[Dict[str, Any]]:
-    """
-    Get market chart data which includes volume
-    
-    For days <= 1: returns 5-minute data
-    For days 2-90: returns hourly data
-    For days > 90: returns daily data
-    """
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        try:
-            response = await client.get(
-                f"{COINGECKO_API_URL}/coins/{coingecko_id}/market_chart",
-                params={
-                    "vs_currency": vs_currency,
-                    "days": days,
-                    "interval": "hourly" if days <= 90 else "daily"
-                }
-            )
-            response.raise_for_status()
-            data = response.json()
-            
-            prices = data.get("prices", [])
-            volumes = data.get("total_volumes", [])
-            
-            # Match prices with volumes by timestamp
-            volume_map = {int(v[0]): v[1] for v in volumes}
-            
-            # Convert to OHLCV format (prices are just close prices)
-            ohlcv_data = []
-            for i, price_data in enumerate(prices):
-                ts = int(price_data[0])
-                price = price_data[1]
-                volume = volume_map.get(ts, 0)
-                
-                ohlcv_data.append({
-                    "timestamp": ts / 1000,
-                    "open": price,  # Using close as open (approximation)
-                    "high": price * 1.001,  # Small range approximation
-                    "low": price * 0.999,
-                    "close": price,
-                    "volume": volume
-                })
-            
-            logger.info(f"Fetched {len(ohlcv_data)} market chart points from CoinGecko for {coingecko_id}")
-            return ohlcv_data
-            
-        except Exception as e:
-            logger.error(f"Error fetching market chart for {coingecko_id}: {e}")
+            logger.warning(f"Error fetching Binance data for {symbol}: {e}")
             return []
 
 
@@ -190,13 +131,14 @@ def store_external_candles(
                 low=candle_data["low"],
                 close=candle_data["close"],
                 volume=candle_data["volume"],
-                trade_count=0  # External data
+                trade_count=0  # External data marker
             )
             session.add(candle)
             stored += 1
         
         session.commit()
-        logger.info(f"Stored {stored} external candles for {ticker_id}")
+        if stored > 0:
+            logger.info(f"Stored {stored} external candles for {ticker_id}")
         
     except Exception as e:
         session.rollback()
@@ -207,83 +149,188 @@ def store_external_candles(
     return stored
 
 
-async def seed_historical_data(ticker_ids: Optional[List[str]] = None, days: int = 7) -> Dict[str, int]:
+async def seed_historical_data(
+    ticker_ids: Optional[List[str]] = None, 
+    days: int = 7
+) -> Dict[str, int]:
     """
-    Seed historical data from CoinGecko for major coins
+    Seed historical data from Binance for major coins
     
     This fills in historical candles that Nado doesn't have,
     allowing indicators to be calculated immediately.
+    
+    Fetches 200 hourly candles (~8 days) for each supported coin.
     """
     results = {}
     
     if ticker_ids is None:
-        ticker_ids = list(COINGECKO_ID_MAP.keys())
+        ticker_ids = list(BINANCE_SYMBOL_MAP.keys())
+    
+    logger.info(f"Seeding historical data for {len(ticker_ids)} tickers...")
     
     for ticker_id in ticker_ids:
-        coingecko_id = COINGECKO_ID_MAP.get(ticker_id)
+        binance_symbol = BINANCE_SYMBOL_MAP.get(ticker_id)
         
-        if not coingecko_id:
-            logger.debug(f"No CoinGecko mapping for {ticker_id}")
+        if not binance_symbol:
+            logger.debug(f"No Binance mapping for {ticker_id}")
             continue
         
         try:
-            # Fetch OHLC data (better quality than market chart for trading)
-            ohlcv_data = await fetch_coingecko_ohlcv(coingecko_id, days=days)
+            # Fetch hourly klines (200 = ~8 days of data)
+            ohlcv_data = await fetch_binance_klines(
+                binance_symbol, 
+                interval="1h", 
+                limit=200
+            )
             
             if ohlcv_data:
                 stored = store_external_candles(ticker_id, ohlcv_data, "1h")
                 results[ticker_id] = stored
+                
+                # Also create 4h candles by aggregating
+                stored_4h = aggregate_and_store_higher_timeframes(ticker_id, ohlcv_data)
+                results[f"{ticker_id}_4h"] = stored_4h
             else:
-                # Fallback to market chart
-                ohlcv_data = await get_coingecko_market_chart(coingecko_id, days=days)
-                stored = store_external_candles(ticker_id, ohlcv_data, "1h")
-                results[ticker_id] = stored
+                results[ticker_id] = 0
             
-            # Rate limit: wait between requests
-            await asyncio.sleep(1.5)
+            # Small delay to be nice to Binance API
+            await asyncio.sleep(0.2)
             
         except Exception as e:
             logger.error(f"Error seeding data for {ticker_id}: {e}")
             results[ticker_id] = 0
     
-    total = sum(results.values())
-    logger.info(f"Historical data seeding complete. Total candles stored: {total}")
+    total = sum(v for k, v in results.items() if not k.endswith("_4h"))
+    logger.info(f"Historical data seeding complete. Total 1h candles stored: {total}")
     
     return results
 
 
-def get_external_candles(
-    ticker_id: str, 
-    timeframe: str = "1h", 
-    limit: int = 100
-) -> List[OHLCV]:
+def aggregate_and_store_higher_timeframes(
+    ticker_id: str,
+    hourly_data: List[Dict[str, Any]]
+) -> int:
     """
-    Get candles from database (includes both Nado and external data)
+    Aggregate hourly data into 4h, 12h, and daily candles
     """
-    from sqlalchemy import desc, and_
+    from collections import defaultdict
+    
+    if not hourly_data:
+        return 0
     
     session = get_session()
+    stored = 0
     
     try:
-        candles = session.query(Candle).filter(
-            and_(
+        # Group by 4-hour periods
+        candles_4h = defaultdict(lambda: {"open": None, "high": float('-inf'), "low": float('inf'), "close": None, "volume": 0, "first_ts": None})
+        candles_12h = defaultdict(lambda: {"open": None, "high": float('-inf'), "low": float('inf'), "close": None, "volume": 0, "first_ts": None})
+        candles_1d = defaultdict(lambda: {"open": None, "high": float('-inf'), "low": float('inf'), "close": None, "volume": 0, "first_ts": None})
+        
+        for candle in hourly_data:
+            dt = datetime.fromtimestamp(candle["timestamp"])
+            
+            # 4h period
+            period_4h = dt.replace(hour=(dt.hour // 4) * 4, minute=0, second=0, microsecond=0)
+            agg = candles_4h[period_4h]
+            if agg["first_ts"] is None or candle["timestamp"] < agg["first_ts"]:
+                agg["first_ts"] = candle["timestamp"]
+                agg["open"] = candle["open"]
+            if candle["timestamp"] > (agg.get("last_ts") or 0):
+                agg["last_ts"] = candle["timestamp"]
+                agg["close"] = candle["close"]
+            agg["high"] = max(agg["high"], candle["high"])
+            agg["low"] = min(agg["low"], candle["low"])
+            agg["volume"] += candle["volume"]
+            
+            # 12h period
+            period_12h = dt.replace(hour=(dt.hour // 12) * 12, minute=0, second=0, microsecond=0)
+            agg = candles_12h[period_12h]
+            if agg["first_ts"] is None or candle["timestamp"] < agg["first_ts"]:
+                agg["first_ts"] = candle["timestamp"]
+                agg["open"] = candle["open"]
+            if candle["timestamp"] > (agg.get("last_ts") or 0):
+                agg["last_ts"] = candle["timestamp"]
+                agg["close"] = candle["close"]
+            agg["high"] = max(agg["high"], candle["high"])
+            agg["low"] = min(agg["low"], candle["low"])
+            agg["volume"] += candle["volume"]
+            
+            # Daily period
+            period_1d = dt.replace(hour=0, minute=0, second=0, microsecond=0)
+            agg = candles_1d[period_1d]
+            if agg["first_ts"] is None or candle["timestamp"] < agg["first_ts"]:
+                agg["first_ts"] = candle["timestamp"]
+                agg["open"] = candle["open"]
+            if candle["timestamp"] > (agg.get("last_ts") or 0):
+                agg["last_ts"] = candle["timestamp"]
+                agg["close"] = candle["close"]
+            agg["high"] = max(agg["high"], candle["high"])
+            agg["low"] = min(agg["low"], candle["low"])
+            agg["volume"] += candle["volume"]
+        
+        # Store 4h candles
+        for period, data in candles_4h.items():
+            if data["open"] is None:
+                continue
+            existing = session.query(Candle).filter(
                 Candle.ticker_id == ticker_id,
-                Candle.timeframe == timeframe
-            )
-        ).order_by(desc(Candle.timestamp)).limit(limit).all()
+                Candle.timeframe == "4h",
+                Candle.timestamp == period
+            ).first()
+            if not existing:
+                candle = Candle(
+                    ticker_id=ticker_id, timeframe="4h", timestamp=period,
+                    open=data["open"], high=data["high"], low=data["low"],
+                    close=data["close"], volume=data["volume"], trade_count=0
+                )
+                session.add(candle)
+                stored += 1
         
-        return [
-            OHLCV(
-                timestamp=c.timestamp,
-                open=c.open,
-                high=c.high,
-                low=c.low,
-                close=c.close,
-                volume=c.volume
-            )
-            for c in reversed(candles)
-        ]
+        # Store 12h candles
+        for period, data in candles_12h.items():
+            if data["open"] is None:
+                continue
+            existing = session.query(Candle).filter(
+                Candle.ticker_id == ticker_id,
+                Candle.timeframe == "12h",
+                Candle.timestamp == period
+            ).first()
+            if not existing:
+                candle = Candle(
+                    ticker_id=ticker_id, timeframe="12h", timestamp=period,
+                    open=data["open"], high=data["high"], low=data["low"],
+                    close=data["close"], volume=data["volume"], trade_count=0
+                )
+                session.add(candle)
+                stored += 1
         
+        # Store daily candles
+        for period, data in candles_1d.items():
+            if data["open"] is None:
+                continue
+            existing = session.query(Candle).filter(
+                Candle.ticker_id == ticker_id,
+                Candle.timeframe == "1d",
+                Candle.timestamp == period
+            ).first()
+            if not existing:
+                candle = Candle(
+                    ticker_id=ticker_id, timeframe="1d", timestamp=period,
+                    open=data["open"], high=data["high"], low=data["low"],
+                    close=data["close"], volume=data["volume"], trade_count=0
+                )
+                session.add(candle)
+                stored += 1
+        
+        session.commit()
+        if stored > 0:
+            logger.info(f"Stored {stored} aggregated candles (4h/12h/1d) for {ticker_id}")
+        
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Error aggregating candles for {ticker_id}: {e}")
     finally:
         session.close()
-
+    
+    return stored
