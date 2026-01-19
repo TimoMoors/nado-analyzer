@@ -1,16 +1,16 @@
 """
 External Data Sources
 
-Uses Binance's public API to fetch historical OHLCV data
+Uses CryptoCompare's free API to fetch historical OHLCV data
 for major cryptocurrencies to supplement Nado's limited historical data.
 
-This provides enough data for indicator calculations when Nado
-hasn't collected enough trades yet.
+CryptoCompare works from cloud servers (unlike Binance which is geo-blocked).
 """
 import httpx
 import asyncio
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Any
+from collections import defaultdict
 import logging
 
 from app.models import OHLCV
@@ -18,72 +18,76 @@ from app.database import Candle, get_session
 
 logger = logging.getLogger(__name__)
 
-# Map Nado ticker to Binance symbols
-BINANCE_SYMBOL_MAP = {
-    "BTC-PERP_USDT0": "BTCUSDT",
-    "ETH-PERP_USDT0": "ETHUSDT",
-    "SOL-PERP_USDT0": "SOLUSDT",
-    "BNB-PERP_USDT0": "BNBUSDT",
-    "XRP-PERP_USDT0": "XRPUSDT",
-    "SUI-PERP_USDT0": "SUIUSDT",
-    "AAVE-PERP_USDT0": "AAVEUSDT",
-    "TAO-PERP_USDT0": "TAOUSDT",
-    "PENGU-PERP_USDT0": "PENGUUSDT",
-    "HYPE-PERP_USDT0": "HYPEUSDT",
-    "XMR-PERP_USDT0": "XMRUSDT",
-    "ZEC-PERP_USDT0": "ZECUSDT",
-    "LIT-PERP_USDT0": "LITUSDT",
+# Map Nado ticker to CryptoCompare symbols
+CRYPTOCOMPARE_SYMBOL_MAP = {
+    "BTC-PERP_USDT0": "BTC",
+    "ETH-PERP_USDT0": "ETH",
+    "SOL-PERP_USDT0": "SOL",
+    "BNB-PERP_USDT0": "BNB",
+    "XRP-PERP_USDT0": "XRP",
+    "SUI-PERP_USDT0": "SUI",
+    "AAVE-PERP_USDT0": "AAVE",
+    "TAO-PERP_USDT0": "TAO",
+    "XMR-PERP_USDT0": "XMR",
+    "ZEC-PERP_USDT0": "ZEC",
+    "LIT-PERP_USDT0": "LIT",
+    "HYPE-PERP_USDT0": "HYPE",
+    "PENGU-PERP_USDT0": "PENGU",
 }
 
-BINANCE_API_URL = "https://api.binance.com/api/v3"
+CRYPTOCOMPARE_API_URL = "https://min-api.cryptocompare.com/data/v2"
 
 
-async def fetch_binance_klines(
+async def fetch_cryptocompare_hourly(
     symbol: str,
-    interval: str = "1h",
-    limit: int = 200
+    limit: int = 200,
+    to_currency: str = "USD"
 ) -> List[Dict[str, Any]]:
     """
-    Fetch OHLCV klines from Binance
+    Fetch hourly OHLCV from CryptoCompare
     
-    Binance kline format:
-    [
-      open_time, open, high, low, close, volume,
-      close_time, quote_volume, trades, taker_buy_base, taker_buy_quote, ignore
-    ]
+    Free API: 100,000 calls/month, no auth required for basic data
+    Returns up to 2000 hourly candles
     """
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
             response = await client.get(
-                f"{BINANCE_API_URL}/klines",
+                f"{CRYPTOCOMPARE_API_URL}/histohour",
                 params={
-                    "symbol": symbol,
-                    "interval": interval,
-                    "limit": limit
+                    "fsym": symbol,
+                    "tsym": to_currency,
+                    "limit": min(limit, 2000)
                 }
             )
             response.raise_for_status()
             data = response.json()
             
-            ohlcv_data = []
-            for candle in data:
-                ohlcv_data.append({
-                    "timestamp": candle[0] / 1000,  # Convert ms to seconds
-                    "open": float(candle[1]),
-                    "high": float(candle[2]),
-                    "low": float(candle[3]),
-                    "close": float(candle[4]),
-                    "volume": float(candle[5])
-                })
+            if data.get("Response") != "Success":
+                logger.warning(f"CryptoCompare error for {symbol}: {data.get('Message')}")
+                return []
             
-            logger.info(f"Fetched {len(ohlcv_data)} klines from Binance for {symbol}")
+            candles = data.get("Data", {}).get("Data", [])
+            
+            ohlcv_data = []
+            for candle in candles:
+                if candle.get("open", 0) > 0:  # Skip empty candles
+                    ohlcv_data.append({
+                        "timestamp": candle["time"],
+                        "open": float(candle["open"]),
+                        "high": float(candle["high"]),
+                        "low": float(candle["low"]),
+                        "close": float(candle["close"]),
+                        "volume": float(candle.get("volumeto", 0))
+                    })
+            
+            logger.info(f"Fetched {len(ohlcv_data)} hourly candles from CryptoCompare for {symbol}")
             return ohlcv_data
             
         except httpx.HTTPStatusError as e:
-            logger.warning(f"Binance API error for {symbol}: {e}")
+            logger.warning(f"CryptoCompare API error for {symbol}: {e}")
             return []
         except Exception as e:
-            logger.warning(f"Error fetching Binance data for {symbol}: {e}")
+            logger.warning(f"Error fetching CryptoCompare data for {symbol}: {e}")
             return []
 
 
@@ -108,7 +112,7 @@ def store_external_candles(
             ts = candle_data["timestamp"]
             
             # Round timestamp to hour boundary
-            dt = datetime.fromtimestamp(ts)
+            dt = datetime.utcfromtimestamp(ts)
             dt = dt.replace(minute=0, second=0, microsecond=0)
             
             # Check if candle exists
@@ -138,7 +142,7 @@ def store_external_candles(
         
         session.commit()
         if stored > 0:
-            logger.info(f"Stored {stored} external candles for {ticker_id}")
+            logger.info(f"Stored {stored} external 1h candles for {ticker_id}")
         
     except Exception as e:
         session.rollback()
@@ -149,183 +153,51 @@ def store_external_candles(
     return stored
 
 
-async def seed_historical_data(
-    ticker_ids: Optional[List[str]] = None, 
-    days: int = 7
-) -> Dict[str, int]:
-    """
-    Seed historical data from Binance for major coins
-    
-    This fills in historical candles that Nado doesn't have,
-    allowing indicators to be calculated immediately.
-    
-    Fetches 200 hourly candles (~8 days) for each supported coin.
-    """
-    results = {}
-    
-    if ticker_ids is None:
-        ticker_ids = list(BINANCE_SYMBOL_MAP.keys())
-    
-    logger.info(f"Seeding historical data for {len(ticker_ids)} tickers...")
-    
-    for ticker_id in ticker_ids:
-        binance_symbol = BINANCE_SYMBOL_MAP.get(ticker_id)
-        
-        if not binance_symbol:
-            logger.debug(f"No Binance mapping for {ticker_id}")
-            continue
-        
-        try:
-            # Fetch hourly klines (200 = ~8 days of data)
-            ohlcv_data = await fetch_binance_klines(
-                binance_symbol, 
-                interval="1h", 
-                limit=200
-            )
-            
-            if ohlcv_data:
-                stored = store_external_candles(ticker_id, ohlcv_data, "1h")
-                results[ticker_id] = stored
-                
-                # Also create 4h candles by aggregating
-                stored_4h = aggregate_and_store_higher_timeframes(ticker_id, ohlcv_data)
-                results[f"{ticker_id}_4h"] = stored_4h
-            else:
-                results[ticker_id] = 0
-            
-            # Small delay to be nice to Binance API
-            await asyncio.sleep(0.2)
-            
-        except Exception as e:
-            logger.error(f"Error seeding data for {ticker_id}: {e}")
-            results[ticker_id] = 0
-    
-    total = sum(v for k, v in results.items() if not k.endswith("_4h"))
-    logger.info(f"Historical data seeding complete. Total 1h candles stored: {total}")
-    
-    return results
-
-
-def aggregate_and_store_higher_timeframes(
+def aggregate_to_higher_timeframes(
     ticker_id: str,
     hourly_data: List[Dict[str, Any]]
-) -> int:
+) -> Dict[str, int]:
     """
     Aggregate hourly data into 4h, 12h, and daily candles
     """
-    from collections import defaultdict
-    
     if not hourly_data:
-        return 0
+        return {"4h": 0, "12h": 0, "1d": 0}
     
     session = get_session()
-    stored = 0
+    results = {"4h": 0, "12h": 0, "1d": 0}
     
     try:
-        # Group by 4-hour periods
-        candles_4h = defaultdict(lambda: {"open": None, "high": float('-inf'), "low": float('inf'), "close": None, "volume": 0, "first_ts": None})
-        candles_12h = defaultdict(lambda: {"open": None, "high": float('-inf'), "low": float('inf'), "close": None, "volume": 0, "first_ts": None})
-        candles_1d = defaultdict(lambda: {"open": None, "high": float('-inf'), "low": float('inf'), "close": None, "volume": 0, "first_ts": None})
+        # Group by time periods
+        candles_4h = defaultdict(lambda: {"open": None, "high": float('-inf'), "low": float('inf'), "close": None, "volume": 0, "first_ts": None, "last_ts": None})
+        candles_12h = defaultdict(lambda: {"open": None, "high": float('-inf'), "low": float('inf'), "close": None, "volume": 0, "first_ts": None, "last_ts": None})
+        candles_1d = defaultdict(lambda: {"open": None, "high": float('-inf'), "low": float('inf'), "close": None, "volume": 0, "first_ts": None, "last_ts": None})
         
         for candle in hourly_data:
-            dt = datetime.fromtimestamp(candle["timestamp"])
+            ts = candle["timestamp"]
+            dt = datetime.utcfromtimestamp(ts)
             
             # 4h period
             period_4h = dt.replace(hour=(dt.hour // 4) * 4, minute=0, second=0, microsecond=0)
-            agg = candles_4h[period_4h]
-            if agg["first_ts"] is None or candle["timestamp"] < agg["first_ts"]:
-                agg["first_ts"] = candle["timestamp"]
-                agg["open"] = candle["open"]
-            if candle["timestamp"] > (agg.get("last_ts") or 0):
-                agg["last_ts"] = candle["timestamp"]
-                agg["close"] = candle["close"]
-            agg["high"] = max(agg["high"], candle["high"])
-            agg["low"] = min(agg["low"], candle["low"])
-            agg["volume"] += candle["volume"]
+            _update_aggregated_candle(candles_4h[period_4h], candle)
             
             # 12h period
             period_12h = dt.replace(hour=(dt.hour // 12) * 12, minute=0, second=0, microsecond=0)
-            agg = candles_12h[period_12h]
-            if agg["first_ts"] is None or candle["timestamp"] < agg["first_ts"]:
-                agg["first_ts"] = candle["timestamp"]
-                agg["open"] = candle["open"]
-            if candle["timestamp"] > (agg.get("last_ts") or 0):
-                agg["last_ts"] = candle["timestamp"]
-                agg["close"] = candle["close"]
-            agg["high"] = max(agg["high"], candle["high"])
-            agg["low"] = min(agg["low"], candle["low"])
-            agg["volume"] += candle["volume"]
+            _update_aggregated_candle(candles_12h[period_12h], candle)
             
             # Daily period
             period_1d = dt.replace(hour=0, minute=0, second=0, microsecond=0)
-            agg = candles_1d[period_1d]
-            if agg["first_ts"] is None or candle["timestamp"] < agg["first_ts"]:
-                agg["first_ts"] = candle["timestamp"]
-                agg["open"] = candle["open"]
-            if candle["timestamp"] > (agg.get("last_ts") or 0):
-                agg["last_ts"] = candle["timestamp"]
-                agg["close"] = candle["close"]
-            agg["high"] = max(agg["high"], candle["high"])
-            agg["low"] = min(agg["low"], candle["low"])
-            agg["volume"] += candle["volume"]
+            _update_aggregated_candle(candles_1d[period_1d], candle)
         
-        # Store 4h candles
-        for period, data in candles_4h.items():
-            if data["open"] is None:
-                continue
-            existing = session.query(Candle).filter(
-                Candle.ticker_id == ticker_id,
-                Candle.timeframe == "4h",
-                Candle.timestamp == period
-            ).first()
-            if not existing:
-                candle = Candle(
-                    ticker_id=ticker_id, timeframe="4h", timestamp=period,
-                    open=data["open"], high=data["high"], low=data["low"],
-                    close=data["close"], volume=data["volume"], trade_count=0
-                )
-                session.add(candle)
-                stored += 1
-        
-        # Store 12h candles
-        for period, data in candles_12h.items():
-            if data["open"] is None:
-                continue
-            existing = session.query(Candle).filter(
-                Candle.ticker_id == ticker_id,
-                Candle.timeframe == "12h",
-                Candle.timestamp == period
-            ).first()
-            if not existing:
-                candle = Candle(
-                    ticker_id=ticker_id, timeframe="12h", timestamp=period,
-                    open=data["open"], high=data["high"], low=data["low"],
-                    close=data["close"], volume=data["volume"], trade_count=0
-                )
-                session.add(candle)
-                stored += 1
-        
-        # Store daily candles
-        for period, data in candles_1d.items():
-            if data["open"] is None:
-                continue
-            existing = session.query(Candle).filter(
-                Candle.ticker_id == ticker_id,
-                Candle.timeframe == "1d",
-                Candle.timestamp == period
-            ).first()
-            if not existing:
-                candle = Candle(
-                    ticker_id=ticker_id, timeframe="1d", timestamp=period,
-                    open=data["open"], high=data["high"], low=data["low"],
-                    close=data["close"], volume=data["volume"], trade_count=0
-                )
-                session.add(candle)
-                stored += 1
+        # Store aggregated candles
+        results["4h"] = _store_aggregated_candles(session, ticker_id, "4h", candles_4h)
+        results["12h"] = _store_aggregated_candles(session, ticker_id, "12h", candles_12h)
+        results["1d"] = _store_aggregated_candles(session, ticker_id, "1d", candles_1d)
         
         session.commit()
-        if stored > 0:
-            logger.info(f"Stored {stored} aggregated candles (4h/12h/1d) for {ticker_id}")
+        
+        total = sum(results.values())
+        if total > 0:
+            logger.info(f"Stored {results} aggregated candles for {ticker_id}")
         
     except Exception as e:
         session.rollback()
@@ -333,4 +205,107 @@ def aggregate_and_store_higher_timeframes(
     finally:
         session.close()
     
+    return results
+
+
+def _update_aggregated_candle(agg: Dict, candle: Dict):
+    """Update aggregated candle with new data point"""
+    ts = candle["timestamp"]
+    
+    if agg["first_ts"] is None or ts < agg["first_ts"]:
+        agg["first_ts"] = ts
+        agg["open"] = candle["open"]
+    
+    if agg["last_ts"] is None or ts > agg["last_ts"]:
+        agg["last_ts"] = ts
+        agg["close"] = candle["close"]
+    
+    agg["high"] = max(agg["high"], candle["high"])
+    agg["low"] = min(agg["low"], candle["low"])
+    agg["volume"] += candle["volume"]
+
+
+def _store_aggregated_candles(session, ticker_id: str, timeframe: str, candles: Dict) -> int:
+    """Store aggregated candles in database"""
+    stored = 0
+    
+    for period, data in candles.items():
+        if data["open"] is None or data["high"] == float('-inf'):
+            continue
+        
+        existing = session.query(Candle).filter(
+            Candle.ticker_id == ticker_id,
+            Candle.timeframe == timeframe,
+            Candle.timestamp == period
+        ).first()
+        
+        if not existing:
+            candle = Candle(
+                ticker_id=ticker_id,
+                timeframe=timeframe,
+                timestamp=period,
+                open=data["open"],
+                high=data["high"],
+                low=data["low"],
+                close=data["close"],
+                volume=data["volume"],
+                trade_count=0
+            )
+            session.add(candle)
+            stored += 1
+    
     return stored
+
+
+async def seed_historical_data(
+    ticker_ids: Optional[List[str]] = None,
+    limit: int = 200
+) -> Dict[str, int]:
+    """
+    Seed historical data from CryptoCompare for major coins
+    
+    Fetches hourly candles and aggregates to 4h, 12h, daily.
+    This provides enough data for indicator calculations.
+    """
+    results = {}
+    
+    if ticker_ids is None:
+        ticker_ids = list(CRYPTOCOMPARE_SYMBOL_MAP.keys())
+    
+    logger.info(f"Seeding historical data for {len(ticker_ids)} tickers from CryptoCompare...")
+    
+    for ticker_id in ticker_ids:
+        cc_symbol = CRYPTOCOMPARE_SYMBOL_MAP.get(ticker_id)
+        
+        if not cc_symbol:
+            logger.debug(f"No CryptoCompare mapping for {ticker_id}")
+            continue
+        
+        try:
+            # Fetch hourly candles
+            ohlcv_data = await fetch_cryptocompare_hourly(cc_symbol, limit=limit)
+            
+            if ohlcv_data:
+                # Store 1h candles
+                stored_1h = store_external_candles(ticker_id, ohlcv_data, "1h")
+                results[ticker_id] = stored_1h
+                
+                # Aggregate to higher timeframes
+                higher_tf = aggregate_to_higher_timeframes(ticker_id, ohlcv_data)
+                results[f"{ticker_id}_4h"] = higher_tf["4h"]
+                results[f"{ticker_id}_12h"] = higher_tf["12h"]
+                results[f"{ticker_id}_1d"] = higher_tf["1d"]
+            else:
+                results[ticker_id] = 0
+            
+            # Rate limit: 50 calls/second for free tier
+            await asyncio.sleep(0.1)
+            
+        except Exception as e:
+            logger.error(f"Error seeding data for {ticker_id}: {e}")
+            results[ticker_id] = 0
+    
+    total_1h = sum(v for k, v in results.items() if not any(k.endswith(x) for x in ["_4h", "_12h", "_1d"]))
+    logger.info(f"Historical data seeding complete. Total 1h candles: {total_1h}")
+    
+    return results

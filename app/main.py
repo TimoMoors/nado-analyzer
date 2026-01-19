@@ -509,35 +509,30 @@ async def trigger_seed():
     }
 
 
-@app.get("/api/test/binance")
-async def test_binance_fetch():
+@app.get("/api/test/cryptocompare")
+async def test_cryptocompare_fetch():
     """
-    Test direct Binance API fetch (for debugging)
+    Test CryptoCompare API fetch (for debugging)
     """
     import httpx
     
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
-                "https://api.binance.com/api/v3/klines",
-                params={"symbol": "BTCUSDT", "interval": "1h", "limit": 10}
+                "https://min-api.cryptocompare.com/data/v2/histohour",
+                params={"fsym": "BTC", "tsym": "USD", "limit": 10}
             )
             response.raise_for_status()
             data = response.json()
             
+            candles = data.get("Data", {}).get("Data", [])
+            
             return {
-                "status": "success",
-                "candles_fetched": len(data),
-                "first_candle": {
-                    "timestamp": data[0][0] if data else None,
-                    "open": data[0][1] if data else None,
-                    "close": data[0][4] if data else None
-                } if data else None,
-                "last_candle": {
-                    "timestamp": data[-1][0] if data else None,
-                    "open": data[-1][1] if data else None,
-                    "close": data[-1][4] if data else None
-                } if data else None
+                "status": "success" if data.get("Response") == "Success" else "error",
+                "message": data.get("Message", "OK"),
+                "candles_fetched": len(candles),
+                "first_candle": candles[0] if candles else None,
+                "last_candle": candles[-1] if candles else None
             }
     except Exception as e:
         return {
@@ -550,33 +545,37 @@ async def test_binance_fetch():
 @app.post("/api/test/seed-btc")
 async def test_seed_btc():
     """
-    Test seeding just BTC (for debugging)
+    Test seeding just BTC from CryptoCompare (for debugging)
     """
-    from app.external_data import fetch_binance_klines, store_external_candles, aggregate_and_store_higher_timeframes
+    from app.external_data import fetch_cryptocompare_hourly, store_external_candles, aggregate_to_higher_timeframes
     
     results = {}
     
     try:
-        # Fetch from Binance
-        ohlcv = await fetch_binance_klines("BTCUSDT", interval="1h", limit=200)
+        # Fetch from CryptoCompare
+        ohlcv = await fetch_cryptocompare_hourly("BTC", limit=200)
         results["fetched_candles"] = len(ohlcv)
         
         if ohlcv:
             results["first_candle"] = ohlcv[0]
             results["last_candle"] = ohlcv[-1]
             
-            # Try to store
+            # Store 1h candles
             stored_1h = store_external_candles("BTC-PERP_USDT0", ohlcv, "1h")
             results["stored_1h"] = stored_1h
             
             # Aggregate to higher TFs
-            stored_higher = aggregate_and_store_higher_timeframes("BTC-PERP_USDT0", ohlcv)
-            results["stored_higher_tf"] = stored_higher
+            higher_tf = aggregate_to_higher_timeframes("BTC-PERP_USDT0", ohlcv)
+            results["stored_4h"] = higher_tf["4h"]
+            results["stored_12h"] = higher_tf["12h"]
+            results["stored_1d"] = higher_tf["1d"]
         
-        # Check final count
+        # Check final counts
         collector = get_data_collector()
-        btc_candles = collector.get_candles("BTC-PERP_USDT0", "1h", 200)
-        results["final_1h_count"] = len(btc_candles)
+        results["final_1h_count"] = len(collector.get_candles("BTC-PERP_USDT0", "1h", 200))
+        results["final_4h_count"] = len(collector.get_candles("BTC-PERP_USDT0", "4h", 200))
+        results["final_12h_count"] = len(collector.get_candles("BTC-PERP_USDT0", "12h", 200))
+        results["final_1d_count"] = len(collector.get_candles("BTC-PERP_USDT0", "1d", 200))
         
         return {"status": "success", "results": results}
         
