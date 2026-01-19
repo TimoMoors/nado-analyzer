@@ -509,30 +509,46 @@ async def trigger_seed():
     }
 
 
-@app.get("/api/test/cryptocompare")
-async def test_cryptocompare_fetch():
+@app.get("/api/test/kraken")
+async def test_kraken_fetch():
     """
-    Test CryptoCompare API fetch (for debugging)
+    Test Kraken API fetch (for debugging)
     """
     import httpx
+    from datetime import timedelta
     
     try:
+        since = int((datetime.utcnow() - timedelta(days=1)).timestamp())
+        
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
-                "https://min-api.cryptocompare.com/data/v2/histohour",
-                params={"fsym": "BTC", "tsym": "USD", "limit": 10}
+                "https://api.kraken.com/0/public/OHLC",
+                params={"pair": "XBTUSD", "interval": 60, "since": since}
             )
             response.raise_for_status()
             data = response.json()
             
-            candles = data.get("Data", {}).get("Data", [])
+            errors = data.get("error", [])
+            result = data.get("result", {})
+            
+            candle_count = 0
+            first_candle = None
+            last_candle = None
+            
+            for key, value in result.items():
+                if key != "last" and isinstance(value, list):
+                    candle_count = len(value)
+                    if value:
+                        first_candle = value[0]
+                        last_candle = value[-1]
+                    break
             
             return {
-                "status": "success" if data.get("Response") == "Success" else "error",
-                "message": data.get("Message", "OK"),
-                "candles_fetched": len(candles),
-                "first_candle": candles[0] if candles else None,
-                "last_candle": candles[-1] if candles else None
+                "status": "success" if not errors else "error",
+                "errors": errors,
+                "candles_fetched": candle_count,
+                "first_candle": first_candle,
+                "last_candle": last_candle
             }
     except Exception as e:
         return {
@@ -545,15 +561,17 @@ async def test_cryptocompare_fetch():
 @app.post("/api/test/seed-btc")
 async def test_seed_btc():
     """
-    Test seeding just BTC from CryptoCompare (for debugging)
+    Test seeding just BTC from Kraken (for debugging)
     """
-    from app.external_data import fetch_cryptocompare_hourly, store_external_candles, aggregate_to_higher_timeframes
+    from app.external_data import fetch_kraken_ohlc, store_external_candles, aggregate_to_higher_timeframes
+    from datetime import timedelta
     
     results = {}
     
     try:
-        # Fetch from CryptoCompare
-        ohlcv = await fetch_cryptocompare_hourly("BTC", limit=200)
+        # Fetch from Kraken (last 7 days)
+        since = int((datetime.utcnow() - timedelta(days=7)).timestamp())
+        ohlcv = await fetch_kraken_ohlc("XBTUSD", interval=60, since=since)
         results["fetched_candles"] = len(ohlcv)
         
         if ohlcv:

@@ -1,10 +1,10 @@
 """
 External Data Sources
 
-Uses CryptoCompare's free API to fetch historical OHLCV data
+Uses Kraken's public API to fetch historical OHLCV data
 for major cryptocurrencies to supplement Nado's limited historical data.
 
-CryptoCompare works from cloud servers (unlike Binance which is geo-blocked).
+Kraken works from cloud servers (no geo-restrictions).
 """
 import httpx
 import asyncio
@@ -18,76 +18,86 @@ from app.database import Candle, get_session
 
 logger = logging.getLogger(__name__)
 
-# Map Nado ticker to CryptoCompare symbols
-CRYPTOCOMPARE_SYMBOL_MAP = {
-    "BTC-PERP_USDT0": "BTC",
-    "ETH-PERP_USDT0": "ETH",
-    "SOL-PERP_USDT0": "SOL",
-    "BNB-PERP_USDT0": "BNB",
-    "XRP-PERP_USDT0": "XRP",
-    "SUI-PERP_USDT0": "SUI",
-    "AAVE-PERP_USDT0": "AAVE",
-    "TAO-PERP_USDT0": "TAO",
-    "XMR-PERP_USDT0": "XMR",
-    "ZEC-PERP_USDT0": "ZEC",
-    "LIT-PERP_USDT0": "LIT",
-    "HYPE-PERP_USDT0": "HYPE",
-    "PENGU-PERP_USDT0": "PENGU",
+# Map Nado ticker to Kraken pairs
+# Kraken uses XXBT for Bitcoin, XETH for Ethereum, etc.
+KRAKEN_PAIR_MAP = {
+    "BTC-PERP_USDT0": "XBTUSD",
+    "ETH-PERP_USDT0": "ETHUSD",
+    "SOL-PERP_USDT0": "SOLUSD",
+    "XRP-PERP_USDT0": "XRPUSD",
+    "AAVE-PERP_USDT0": "AAVEUSD",
+    "XMR-PERP_USDT0": "XMRUSD",
+    "ZEC-PERP_USDT0": "ZECUSD",
+    "LIT-PERP_USDT0": "LITUSD",
+    # BNB, SUI, TAO, HYPE, PENGU not on Kraken - will use defaults
 }
 
-CRYPTOCOMPARE_API_URL = "https://min-api.cryptocompare.com/data/v2"
+KRAKEN_API_URL = "https://api.kraken.com/0/public"
 
 
-async def fetch_cryptocompare_hourly(
-    symbol: str,
-    limit: int = 200,
-    to_currency: str = "USD"
+async def fetch_kraken_ohlc(
+    pair: str,
+    interval: int = 60,  # 60 = 1 hour in minutes
+    since: Optional[int] = None
 ) -> List[Dict[str, Any]]:
     """
-    Fetch hourly OHLCV from CryptoCompare
+    Fetch OHLC from Kraken
     
-    Free API: 100,000 calls/month, no auth required for basic data
-    Returns up to 2000 hourly candles
+    Kraken OHLC format:
+    [time, open, high, low, close, vwap, volume, count]
+    
+    interval: 1, 5, 15, 30, 60, 240, 1440, 10080, 21600
     """
+    if since is None:
+        # Get last 7 days
+        since = int((datetime.utcnow() - timedelta(days=7)).timestamp())
+    
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
             response = await client.get(
-                f"{CRYPTOCOMPARE_API_URL}/histohour",
+                f"{KRAKEN_API_URL}/OHLC",
                 params={
-                    "fsym": symbol,
-                    "tsym": to_currency,
-                    "limit": min(limit, 2000)
+                    "pair": pair,
+                    "interval": interval,
+                    "since": since
                 }
             )
             response.raise_for_status()
             data = response.json()
             
-            if data.get("Response") != "Success":
-                logger.warning(f"CryptoCompare error for {symbol}: {data.get('Message')}")
+            if data.get("error") and len(data["error"]) > 0:
+                logger.warning(f"Kraken API error for {pair}: {data['error']}")
                 return []
             
-            candles = data.get("Data", {}).get("Data", [])
+            result = data.get("result", {})
+            
+            # Find the data (key is the pair name which varies)
+            candle_data = []
+            for key, value in result.items():
+                if key != "last" and isinstance(value, list):
+                    candle_data = value
+                    break
             
             ohlcv_data = []
-            for candle in candles:
-                if candle.get("open", 0) > 0:  # Skip empty candles
-                    ohlcv_data.append({
-                        "timestamp": candle["time"],
-                        "open": float(candle["open"]),
-                        "high": float(candle["high"]),
-                        "low": float(candle["low"]),
-                        "close": float(candle["close"]),
-                        "volume": float(candle.get("volumeto", 0))
-                    })
+            for candle in candle_data:
+                # [time, open, high, low, close, vwap, volume, count]
+                ohlcv_data.append({
+                    "timestamp": int(candle[0]),
+                    "open": float(candle[1]),
+                    "high": float(candle[2]),
+                    "low": float(candle[3]),
+                    "close": float(candle[4]),
+                    "volume": float(candle[6])
+                })
             
-            logger.info(f"Fetched {len(ohlcv_data)} hourly candles from CryptoCompare for {symbol}")
+            logger.info(f"Fetched {len(ohlcv_data)} candles from Kraken for {pair}")
             return ohlcv_data
             
         except httpx.HTTPStatusError as e:
-            logger.warning(f"CryptoCompare API error for {symbol}: {e}")
+            logger.warning(f"Kraken API HTTP error for {pair}: {e}")
             return []
         except Exception as e:
-            logger.warning(f"Error fetching CryptoCompare data for {symbol}: {e}")
+            logger.warning(f"Error fetching Kraken data for {pair}: {e}")
             return []
 
 
@@ -259,10 +269,10 @@ def _store_aggregated_candles(session, ticker_id: str, timeframe: str, candles: 
 
 async def seed_historical_data(
     ticker_ids: Optional[List[str]] = None,
-    limit: int = 200
+    days: int = 7
 ) -> Dict[str, int]:
     """
-    Seed historical data from CryptoCompare for major coins
+    Seed historical data from Kraken for major coins
     
     Fetches hourly candles and aggregates to 4h, 12h, daily.
     This provides enough data for indicator calculations.
@@ -270,20 +280,22 @@ async def seed_historical_data(
     results = {}
     
     if ticker_ids is None:
-        ticker_ids = list(CRYPTOCOMPARE_SYMBOL_MAP.keys())
+        ticker_ids = list(KRAKEN_PAIR_MAP.keys())
     
-    logger.info(f"Seeding historical data for {len(ticker_ids)} tickers from CryptoCompare...")
+    logger.info(f"Seeding historical data for {len(ticker_ids)} tickers from Kraken...")
+    
+    since = int((datetime.utcnow() - timedelta(days=days)).timestamp())
     
     for ticker_id in ticker_ids:
-        cc_symbol = CRYPTOCOMPARE_SYMBOL_MAP.get(ticker_id)
+        kraken_pair = KRAKEN_PAIR_MAP.get(ticker_id)
         
-        if not cc_symbol:
-            logger.debug(f"No CryptoCompare mapping for {ticker_id}")
+        if not kraken_pair:
+            logger.debug(f"No Kraken mapping for {ticker_id}")
             continue
         
         try:
-            # Fetch hourly candles
-            ohlcv_data = await fetch_cryptocompare_hourly(cc_symbol, limit=limit)
+            # Fetch hourly candles (interval=60 minutes)
+            ohlcv_data = await fetch_kraken_ohlc(kraken_pair, interval=60, since=since)
             
             if ohlcv_data:
                 # Store 1h candles
@@ -298,8 +310,8 @@ async def seed_historical_data(
             else:
                 results[ticker_id] = 0
             
-            # Rate limit: 50 calls/second for free tier
-            await asyncio.sleep(0.1)
+            # Rate limit: be nice to public API
+            await asyncio.sleep(0.5)
             
         except Exception as e:
             logger.error(f"Error seeding data for {ticker_id}: {e}")
