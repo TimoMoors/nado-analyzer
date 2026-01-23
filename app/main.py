@@ -27,6 +27,13 @@ from app.database import init_db
 from app.indicators import calculate_all_indicators, determine_signal_from_indicators
 from app.external_data import seed_historical_data
 
+# TAO ecosystem imports
+from app.tao_client import TaoStatsClient, get_tao_client
+from app.tao_analyzer import get_tao_analyzer, TaoAnalyzer
+from app.tao_models import (
+    SubnetInvestmentScore, TAOMarketSummary, InvestmentSignal
+)
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -34,10 +41,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Global state for caching
+# Global state for caching - Nado
 _cached_setups: List[TradingSetup] = []
 _cached_market_summary: Optional[MarketSummary] = None
 _last_update: Optional[datetime] = None
+
+# Global state for caching - TAO
+_cached_tao_investment_scores: List[SubnetInvestmentScore] = []
+_cached_tao_summary: Optional[TAOMarketSummary] = None
+_tao_last_update: Optional[datetime] = None
 
 
 async def collect_historical_data():
@@ -154,6 +166,44 @@ async def refresh_data():
         logger.error(f"Error refreshing data: {e}")
 
 
+async def refresh_tao_data():
+    """Background task to refresh TAO ecosystem data and analysis"""
+    global _cached_tao_investment_scores, _cached_tao_summary, _tao_last_update
+    
+    settings = get_settings()
+    if not settings.taostats_api_key:
+        logger.warning("TAO refresh skipped - no API key configured")
+        return
+    
+    logger.info("Refreshing TAO ecosystem data...")
+    
+    try:
+        client = await get_tao_client()
+        analyzer = get_tao_analyzer()
+        
+        # Fetch subnet and pool data only
+        subnets = await client.get_subnets()
+        pools = await client.get_subnet_pools()
+        
+        logger.info(f"Fetched {len(subnets)} subnets, {len(pools)} pools")
+        
+        # Generate investment scores
+        investment_scores = analyzer.analyze_subnets(subnets, pools)
+        
+        # Generate market summary (subnet-focused)
+        tao_summary = analyzer.generate_subnet_summary(subnets, pools, investment_scores)
+        
+        # Update cache
+        _cached_tao_investment_scores = investment_scores
+        _cached_tao_summary = tao_summary
+        _tao_last_update = datetime.utcnow()
+        
+        logger.info(f"TAO data refresh complete. {len(investment_scores)} subnets analyzed.")
+        
+    except Exception as e:
+        logger.error(f"Error refreshing TAO data: {e}", exc_info=True)
+
+
 # Scheduler for background data refresh
 scheduler = AsyncIOScheduler()
 
@@ -178,6 +228,13 @@ async def lifespan(app: FastAPI):
     
     # Initial analysis
     await refresh_data()
+    
+    # Initial TAO data refresh (if API key configured)
+    if settings.taostats_api_key:
+        logger.info("Fetching initial TAO ecosystem data...")
+        await refresh_tao_data()
+    else:
+        logger.warning("TAO API key not configured - TAO features disabled")
     
     # Start scheduler
     # Refresh market analysis every minute
@@ -204,8 +261,17 @@ async def lifespan(app: FastAPI):
         id='collect_data_interval'
     )
     
+    # TAO data refresh every 2 minutes (rate limit friendly)
+    if settings.taostats_api_key:
+        scheduler.add_job(
+            refresh_tao_data,
+            'interval',
+            seconds=settings.tao_refresh_interval,
+            id='refresh_tao_data'
+        )
+    
     scheduler.start()
-    logger.info(f"Scheduler started. Analysis: {settings.data_refresh_interval}s, Data collection: every hour + every 15min")
+    logger.info(f"Scheduler started. Nado: {settings.data_refresh_interval}s, TAO: {settings.tao_refresh_interval}s")
     
     yield
     
@@ -213,6 +279,13 @@ async def lifespan(app: FastAPI):
     scheduler.shutdown()
     client = await get_nado_client()
     await client.close()
+    
+    # Close TAO client if initialized
+    try:
+        tao_client = await get_tao_client()
+        await tao_client.close()
+    except:
+        pass
 
 
 # Create FastAPI app
@@ -885,6 +958,159 @@ async def get_all_multi_timeframe_signals():
     return results
 
 
+# ==================== TAO Ecosystem API Endpoints ====================
+
+@app.get("/api/tao/health")
+async def tao_health_check():
+    """Health check for TAO endpoints"""
+    settings = get_settings()
+    return {
+        "status": "healthy" if settings.taostats_api_key else "disabled",
+        "api_key_configured": bool(settings.taostats_api_key),
+        "last_update": _tao_last_update.isoformat() if _tao_last_update else None,
+        "subnets_loaded": len(_cached_tao_investment_scores)
+    }
+
+
+@app.get("/api/tao/summary")
+async def get_tao_summary():
+    """
+    Get TAO ecosystem summary
+    
+    Returns overview including:
+    - Total subnets
+    - Top subnets by emission, market cap, flow
+    - Best investment opportunities
+    - Market sentiment
+    """
+    if _cached_tao_summary is None:
+        raise HTTPException(status_code=503, detail="TAO data not yet loaded")
+    return _cached_tao_summary
+
+
+@app.get("/api/tao/investment-scores", response_model=List[SubnetInvestmentScore])
+async def get_investment_scores(
+    signal: Optional[InvestmentSignal] = Query(None, description="Filter by signal"),
+    min_score: float = Query(0, ge=0, le=100, description="Minimum score"),
+    limit: int = Query(20, ge=1, le=100, description="Maximum results")
+):
+    """
+    Get investment scores for subnet tokens
+    
+    Returns subnets ranked by investment attractiveness with:
+    - Overall score and signal
+    - Component scores (momentum, flow, emission, liquidity, sentiment, health)
+    - Market data (price, market cap, volume)
+    - Bullish/bearish factors
+    """
+    if not _cached_tao_investment_scores:
+        raise HTTPException(status_code=503, detail="TAO data not yet loaded")
+    
+    filtered = _cached_tao_investment_scores
+    
+    if signal:
+        filtered = [s for s in filtered if s.signal == signal]
+    
+    filtered = [s for s in filtered if s.overall_score >= min_score]
+    
+    return filtered[:limit]
+
+
+@app.get("/api/tao/investment-scores/{netuid}", response_model=SubnetInvestmentScore)
+async def get_investment_score_by_netuid(netuid: int):
+    """Get investment score for a specific subnet"""
+    score = next((s for s in _cached_tao_investment_scores if s.netuid == netuid), None)
+    
+    if score is None:
+        raise HTTPException(status_code=404, detail=f"Subnet {netuid} not found")
+    
+    return score
+
+
+@app.get("/api/tao/subnets")
+async def get_tao_subnets():
+    """
+    Get list of all subnets with basic metrics
+    
+    Returns simplified subnet data for listing
+    """
+    if not _cached_tao_investment_scores:
+        raise HTTPException(status_code=503, detail="TAO data not yet loaded")
+    
+    return [
+        {
+            "netuid": s.netuid,
+            "name": s.name,
+            "symbol": s.symbol,
+            "signal": s.signal.value,
+            "overall_score": s.overall_score,
+            "market_cap": s.market_cap,
+            "price": s.price,
+            "price_change_24h": s.price_change_24h,
+            "price_change_7d": s.price_change_7d,
+            "emission": s.emission,
+            "net_flow_7d": s.net_flow_7d,
+            "active_validators": s.active_validators,
+            "active_miners": s.active_miners,
+            "fear_and_greed": s.fear_and_greed_sentiment
+        }
+        for s in _cached_tao_investment_scores
+    ]
+
+
+@app.get("/api/tao/best-investments")
+async def get_best_investments(limit: int = Query(5, ge=1, le=20)):
+    """
+    Get the best subnet tokens for investment
+    
+    Returns top subnets by investment score
+    """
+    if not _cached_tao_investment_scores:
+        raise HTTPException(status_code=503, detail="TAO data not yet loaded")
+    
+    return [
+        {
+            "netuid": s.netuid,
+            "name": s.name,
+            "symbol": s.symbol,
+            "signal": s.signal.value,
+            "overall_score": s.overall_score,
+            "price": s.price,
+            "price_change_24h": s.price_change_24h,
+            "price_change_7d": s.price_change_7d,
+            "market_cap": s.market_cap,
+            "emission": s.emission,
+            "bullish_factors": s.bullish_factors[:3],
+            "bearish_factors": s.bearish_factors[:3],
+            "warnings": s.warnings,
+            "component_scores": {
+                "momentum": s.momentum_score,
+                "flow": s.flow_score,
+                "emission": s.emission_score,
+                "liquidity": s.liquidity_score,
+                "sentiment": s.sentiment_score,
+                "network_health": s.network_health_score
+            }
+        }
+        for s in _cached_tao_investment_scores[:limit]
+    ]
+
+
+@app.post("/api/tao/refresh")
+async def trigger_tao_refresh():
+    """
+    Manually trigger TAO data refresh
+    
+    Use sparingly - data automatically refreshes on schedule
+    """
+    settings = get_settings()
+    if not settings.taostats_api_key:
+        raise HTTPException(status_code=400, detail="TAO API key not configured")
+    
+    await refresh_tao_data()
+    return {"status": "refresh_complete", "timestamp": datetime.utcnow().isoformat()}
+
+
 # ==================== Static Files (Frontend) ====================
 
 # Mount static files directory
@@ -893,8 +1119,14 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.get("/")
 async def serve_frontend():
-    """Serve the frontend application"""
+    """Serve the Nado frontend application"""
     return FileResponse("static/index.html")
+
+
+@app.get("/tao")
+async def serve_tao_frontend():
+    """Serve the TAO ecosystem analyzer frontend"""
+    return FileResponse("static/tao.html")
 
 
 # ==================== Main Entry Point ====================

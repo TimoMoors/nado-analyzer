@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TAO Subnet Analyzer - Bittensor Ecosystem</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/styles.css">
+    <style>
+        /* TAO-specific styles */
+        .logo-highlight {
+            color: #00d4aa;
+        }
+        
+        .status-dot {
+            background: #00d4aa;
+        }
+        
+        .highlight-green {
+            border-color: #00d4aa;
+        }
+        
+        .signal-badge.strong_stake,
+        .signal-badge.strong_buy {
+            background: linear-gradient(135deg, #00d4aa 0%, #00a080 100%);
+        }
+        
+        .signal-badge.stake,
+        .signal-badge.buy {
+            background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+        }
+        
+        .signal-badge.hold,
+        .signal-badge.neutral {
+            background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%);
+        }
+        
+        .signal-badge.reduce,
+        .signal-badge.sell {
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+        }
+        
+        .signal-badge.avoid,
+        .signal-badge.strong_sell {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+        }
+        
+        .nav-links {
+            display: flex;
+            gap: 1rem;
+        }
+        
+        .nav-link {
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+            text-decoration: none;
+            color: var(--text-secondary);
+            transition: all 0.2s;
+        }
+        
+        .nav-link:hover {
+            color: var(--text-primary);
+            background: var(--bg-secondary);
+        }
+        
+        .nav-link.active {
+            color: #00d4aa;
+            background: rgba(0, 212, 170, 0.1);
+        }
+        
+        .subnet-card {
+            background: var(--bg-secondary);
+            border-radius: 1rem;
+            padding: 1.5rem;
+            border: 1px solid var(--border-color);
+            transition: all 0.2s;
+        }
+        
+        .subnet-card:hover {
+            border-color: #00d4aa;
+            transform: translateY(-2px);
+        }
+        
+        .subnet-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 1rem;
+        }
+        
+        .subnet-name {
+            font-size: 1.125rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        
+        .subnet-symbol {
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+        }
+        
+        .subnet-netuid {
+            background: var(--bg-tertiary);
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.25rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+        
+        .metric-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .metric-row:last-child {
+            border-bottom: none;
+        }
+        
+        .metric-label {
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+        }
+        
+        .metric-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 500;
+        }
+        
+        .metric-value.positive {
+            color: #22c55e;
+        }
+        
+        .metric-value.negative {
+            color: #ef4444;
+        }
+        
+        .score-bar-container {
+            margin-top: 1rem;
+        }
+        
+        .score-bar {
+            height: 8px;
+            background: var(--bg-tertiary);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        
+        .score-bar-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.3s ease;
+        }
+        
+        .score-bar-fill.excellent {
+            background: linear-gradient(90deg, #00d4aa, #22c55e);
+        }
+        
+        .score-bar-fill.good {
+            background: linear-gradient(90deg, #22c55e, #84cc16);
+        }
+        
+        .score-bar-fill.average {
+            background: linear-gradient(90deg, #f59e0b, #fbbf24);
+        }
+        
+        .score-bar-fill.poor {
+            background: linear-gradient(90deg, #ef4444, #f87171);
+        }
+        
+        .component-scores {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0.5rem;
+            margin-top: 1rem;
+        }
+        
+        .component-score {
+            text-align: center;
+            padding: 0.5rem;
+            background: var(--bg-tertiary);
+            border-radius: 0.5rem;
+        }
+        
+        .component-score-value {
+            font-size: 1.25rem;
+            font-weight: 600;
+            font-family: 'JetBrains Mono', monospace;
+        }
+        
+        .component-score-label {
+            font-size: 0.625rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        
+        .validator-card {
+            background: var(--bg-secondary);
+            border-radius: 1rem;
+            padding: 1.5rem;
+            border: 1px solid var(--border-color);
+            transition: all 0.2s;
+        }
+        
+        .validator-card:hover {
+            border-color: #00d4aa;
+        }
+        
+        .validator-name {
+            font-size: 1.125rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 0.25rem;
+        }
+        
+        .validator-rank {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            background: linear-gradient(135deg, #fbbf24, #f59e0b);
+            color: #000;
+            padding: 0.125rem 0.5rem;
+            border-radius: 0.25rem;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        
+        .apr-display {
+            font-size: 2rem;
+            font-weight: 700;
+            font-family: 'JetBrains Mono', monospace;
+            color: #00d4aa;
+            margin: 0.5rem 0;
+        }
+        
+        .apr-label {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+        }
+        
+        .factors-list {
+            margin-top: 1rem;
+        }
+        
+        .factor {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.5rem;
+            padding: 0.25rem 0;
+            font-size: 0.875rem;
+        }
+        
+        .factor-bullish {
+            color: #22c55e;
+        }
+        
+        .factor-bearish {
+            color: #ef4444;
+        }
+        
+        .factor-warning {
+            color: #f59e0b;
+        }
+        
+        .tabs {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
+        }
+        
+        .tab-btn {
+            padding: 0.75rem 1.5rem;
+            border: 1px solid var(--border-color);
+            background: var(--bg-secondary);
+            color: var(--text-secondary);
+            border-radius: 0.5rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-weight: 500;
+        }
+        
+        .tab-btn:hover {
+            border-color: #00d4aa;
+            color: var(--text-primary);
+        }
+        
+        .tab-btn.active {
+            background: linear-gradient(135deg, #00d4aa, #00a080);
+            color: #000;
+            border-color: transparent;
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="app">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-left">
+                <div class="logo">
+                    <div class="logo-icon">
+                        <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <circle cx="16" cy="16" r="14" stroke="currentColor" stroke-width="2" fill="none"/>
+                            <path d="M16 6 L16 26 M6 16 L26 16" stroke="currentColor" stroke-width="2"/>
+                            <circle cx="16" cy="16" r="6" fill="currentColor"/>
+                        </svg>
+                    </div>
+                    <span class="logo-text">TAO<span class="logo-highlight">Analyzer</span></span>
+                </div>
+                <nav class="nav-links">
+                    <a href="/" class="nav-link">Nado</a>
+                    <a href="/tao" class="nav-link active">TAO</a>
+                </nav>
+            </div>
+            <div class="header-center">
+                <div class="status-badge" id="connection-status">
+                    <span class="status-dot"></span>
+                    <span class="status-text">Connecting...</span>
+                </div>
+            </div>
+            <div class="header-right">
+                <button class="btn btn-ghost" id="refresh-btn" title="Refresh Data">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M23 4v6h-6M1 20v-6h6"/>
+                        <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+                    </svg>
+                </button>
+                <div class="last-update" id="last-update">--</div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main">
+            <!-- Summary Cards -->
+            <section class="summary-section">
+                <div class="summary-grid">
+                    <div class="summary-card">
+                        <div class="summary-label">Total Subnets</div>
+                        <div class="summary-value" id="total-subnets">--</div>
+                    </div>
+                    <div class="summary-card highlight-green">
+                        <div class="summary-label">Bullish Subnets</div>
+                        <div class="summary-value" id="bullish-subnets">--</div>
+                    </div>
+                    <div class="summary-card">
+                        <div class="summary-label">Bearish Subnets</div>
+                        <div class="summary-value" id="bearish-subnets">--</div>
+                    </div>
+                    <div class="summary-card">
+                        <div class="summary-label">Market Sentiment</div>
+                        <div class="summary-value" id="market-sentiment">--</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Tabs -->
+            <section class="tabs-section">
+                <div class="tabs">
+                    <button class="tab-btn active" data-tab="investments">📈 Best Opportunities</button>
+                    <button class="tab-btn" data-tab="subnets">🌐 All Subnets</button>
+                </div>
+
+                <!-- Investment Scores Tab -->
+                <div class="tab-content active" id="tab-investments">
+                    <div class="section-header">
+                        <h2 class="section-title">
+                            <svg class="title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                            </svg>
+                            Best Subnet Investment Opportunities
+                        </h2>
+                    </div>
+                    <div class="setups-grid" id="investment-grid">
+                        <!-- Investment cards will be inserted here -->
+                    </div>
+                </div>
+
+                <!-- All Subnets Tab -->
+                <div class="tab-content" id="tab-subnets">
+                    <div class="section-header">
+                        <h2 class="section-title">
+                            <svg class="title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"/>
+                                <line x1="2" y1="12" x2="22" y2="12"/>
+                                <path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>
+                            </svg>
+                            All Subnets
+                        </h2>
+                        <div class="search-box">
+                            <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="11" cy="11" r="8"/>
+                                <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                            </svg>
+                            <input type="text" class="search-input" id="subnet-search" placeholder="Search subnets...">
+                        </div>
+                    </div>
+                    <div class="markets-table-container">
+                        <table class="markets-table">
+                            <thead>
+                                <tr>
+                                    <th class="sortable" data-sort="netuid">NetUID</th>
+                                    <th class="sortable" data-sort="name">Name</th>
+                                    <th class="sortable" data-sort="price">Price (τ)</th>
+                                    <th class="sortable" data-sort="price_change_24h">24h Change</th>
+                                    <th class="sortable" data-sort="market_cap">Market Cap</th>
+                                    <th class="sortable" data-sort="emission">Emission</th>
+                                    <th class="sortable" data-sort="overall_score">Score</th>
+                                    <th class="sortable" data-sort="signal">Signal</th>
+                                </tr>
+                            </thead>
+                            <tbody id="subnets-table-body">
+                                <!-- Subnets will be inserted here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Toast Container -->
+        <div class="toast-container" id="toast-container"></div>
+    </div>
+
+    <script src="/static/tao-app.js"></script>
+</body>
+</html>

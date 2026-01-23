@@ -13,8 +13,13 @@ class Settings(BaseSettings):
     nado_gateway_url: str = "https://gateway.prod.nado.xyz"
     nado_archive_url: str = "https://archive.prod.nado.xyz"
     
+    # TAO Stats API Configuration
+    # Get your API key at: https://dash.taostats.io
+    taostats_api_key: str = ""
+    
     # Data refresh interval in seconds
     data_refresh_interval: int = 60
+    tao_refresh_interval: int = 120  # TAO data refresh interval (2 min due to rate limits)
     
     # Database 
     # For local development: sqlite+aiosqlite:///./nado_data.db
