@@ -33,6 +33,7 @@ from app.tao_analyzer import get_tao_analyzer, TaoAnalyzer
 from app.tao_models import (
     SubnetInvestmentScore, TAOMarketSummary, InvestmentSignal
 )
+from app.tao_signal_tracker import get_signal_tracker
 
 # Configure logging
 logging.basicConfig(
@@ -180,6 +181,7 @@ async def refresh_tao_data():
     try:
         client = await get_tao_client()
         analyzer = get_tao_analyzer()
+        signal_tracker = get_signal_tracker()
         
         # Fetch subnet and pool data only
         subnets = await client.get_subnets()
@@ -197,6 +199,13 @@ async def refresh_tao_data():
         _cached_tao_investment_scores = investment_scores
         _cached_tao_summary = tao_summary
         _tao_last_update = datetime.utcnow()
+        
+        # Record signals to history (for tracking accuracy)
+        signal_tracker.record_signals(investment_scores)
+        
+        # Update outcomes for past signals
+        current_prices = {s.netuid: s.price for s in investment_scores if s.price}
+        signal_tracker.update_outcomes(current_prices)
         
         logger.info(f"TAO data refresh complete. {len(investment_scores)} subnets analyzed.")
         
@@ -1109,6 +1118,63 @@ async def trigger_tao_refresh():
     
     await refresh_tao_data()
     return {"status": "refresh_complete", "timestamp": datetime.utcnow().isoformat()}
+
+
+# ==================== TAO Signal History Endpoints ====================
+
+@app.get("/api/tao/signal-history")
+async def get_signal_history(
+    netuid: Optional[int] = Query(None, description="Filter by subnet"),
+    signal: Optional[str] = Query(None, description="Filter by signal type"),
+    limit: int = Query(50, ge=1, le=200, description="Maximum results")
+):
+    """
+    Get historical investment signals with outcomes
+    
+    Shows past signals and their actual performance to build trust.
+    Includes:
+    - Signal and score at time of recording
+    - Price at signal time
+    - 24h and 7d returns (when available)
+    - Win/loss status
+    """
+    tracker = get_signal_tracker()
+    return tracker.get_signal_history(netuid=netuid, signal_filter=signal, limit=limit)
+
+
+@app.get("/api/tao/signal-performance")
+async def get_signal_performance(
+    days: int = Query(30, ge=1, le=90, description="Period to analyze")
+):
+    """
+    Get signal accuracy statistics
+    
+    Shows how accurate our signals have been:
+    - Win rate for buy signals (price went up)
+    - Win rate for sell signals (price went down)
+    - Average returns by signal type
+    """
+    tracker = get_signal_tracker()
+    return tracker.get_performance_stats(days=days)
+
+
+@app.get("/api/tao/signal-history/{netuid}")
+async def get_subnet_signal_history(
+    netuid: int,
+    limit: int = Query(20, ge=1, le=100, description="Maximum results")
+):
+    """
+    Get signal history for a specific subnet
+    
+    Shows the evolution of signals for a particular subnet over time.
+    """
+    tracker = get_signal_tracker()
+    history = tracker.get_signal_history(netuid=netuid, limit=limit)
+    
+    if not history:
+        raise HTTPException(status_code=404, detail=f"No signal history for subnet {netuid}")
+    
+    return history
 
 
 # ==================== Static Files (Frontend) ====================

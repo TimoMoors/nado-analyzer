@@ -140,6 +140,56 @@ class MarketSnapshot(Base):
     )
 
 
+class TaoSignalHistory(Base):
+    """
+    Historical record of TAO subnet investment signals
+    
+    Tracks signals over time with price data to measure accuracy.
+    """
+    __tablename__ = "tao_signal_history"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    
+    # Subnet identifier
+    netuid = Column(Integer, nullable=False, index=True)
+    name = Column(String(100), nullable=True)
+    symbol = Column(String(20), nullable=True)
+    
+    # Signal data at time of recording
+    signal = Column(String(20), nullable=False)  # strong_buy, buy, neutral, sell, strong_sell
+    score = Column(Float, nullable=False)
+    
+    # Component scores for transparency
+    momentum_score = Column(Float, nullable=True)
+    flow_score = Column(Float, nullable=True)
+    emission_score = Column(Float, nullable=True)
+    liquidity_score = Column(Float, nullable=True)
+    
+    # Price at signal time (in TAO)
+    price_at_signal = Column(Float, nullable=True)
+    market_cap_at_signal = Column(Float, nullable=True)
+    
+    # Bullish/bearish factors (stored as JSON string)
+    factors = Column(String(2000), nullable=True)
+    
+    # Timestamp when signal was recorded
+    timestamp = Column(DateTime, nullable=False, index=True)
+    
+    # Outcome tracking (updated later)
+    price_after_24h = Column(Float, nullable=True)
+    price_after_7d = Column(Float, nullable=True)
+    return_24h = Column(Float, nullable=True)  # percentage
+    return_7d = Column(Float, nullable=True)   # percentage
+    outcome_updated_at = Column(DateTime, nullable=True)
+    
+    __table_args__ = (
+        Index('ix_tao_signal_lookup', 'netuid', 'timestamp'),
+    )
+    
+    def __repr__(self):
+        return f"<TaoSignal {self.netuid} {self.signal} @ {self.timestamp}>"
+
+
 # Database engine and session
 _engine = None
 _async_engine = None

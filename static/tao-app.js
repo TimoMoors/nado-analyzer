@@ -13,6 +13,8 @@ const REFRESH_INTERVAL = 120000; // 2 minutes
 
 let subnetsData = [];
 let summaryData = null;
+let signalHistory = [];
+let performanceStats = null;
 let lastUpdate = null;
 
 // ==================== Utility Functions ====================
@@ -125,6 +127,28 @@ async function loadBestInvestments() {
     }
 }
 
+async function loadSignalHistory() {
+    try {
+        signalHistory = await fetchData('/signal-history?limit=50');
+        renderSignalHistory();
+    } catch (error) {
+        console.error('Error loading signal history:', error);
+        signalHistory = [];
+        renderSignalHistory();
+    }
+}
+
+async function loadPerformanceStats() {
+    try {
+        performanceStats = await fetchData('/signal-performance?days=30');
+        renderPerformanceStats();
+    } catch (error) {
+        console.error('Error loading performance stats:', error);
+        performanceStats = null;
+        renderPerformanceStats();
+    }
+}
+
 async function checkHealth() {
     try {
         const health = await fetchData('/health');
@@ -163,7 +187,9 @@ async function loadAllData() {
     await Promise.all([
         loadSummary(),
         loadSubnets(),
-        loadBestInvestments()
+        loadBestInvestments(),
+        loadSignalHistory(),
+        loadPerformanceStats()
     ]);
     
     lastUpdate = new Date();
@@ -314,6 +340,91 @@ function renderSubnetsTable() {
             <td><span class="signal-badge ${getSignalClass(s.signal)}">${getSignalEmoji(s.signal)} ${s.signal.replace(/_/g, ' ')}</span></td>
         </tr>
     `).join('');
+}
+
+function renderPerformanceStats() {
+    const buyAccuracy = document.getElementById('buy-accuracy-24h');
+    const avgReturn = document.getElementById('avg-return-24h');
+    const totalSignals = document.getElementById('total-signals');
+    
+    if (!performanceStats || performanceStats.total_signals === 0) {
+        buyAccuracy.textContent = '--';
+        avgReturn.textContent = '--';
+        totalSignals.textContent = '0';
+        return;
+    }
+    
+    // Display buy accuracy
+    if (performanceStats.buy_accuracy_24h !== undefined) {
+        buyAccuracy.textContent = performanceStats.buy_accuracy_24h.toFixed(1) + '%';
+    } else {
+        buyAccuracy.textContent = '--';
+    }
+    
+    // Display average return
+    if (performanceStats.buy_avg_return_24h !== undefined) {
+        const returnVal = performanceStats.buy_avg_return_24h;
+        avgReturn.textContent = (returnVal >= 0 ? '+' : '') + returnVal.toFixed(2) + '%';
+        avgReturn.className = 'performance-value' + (returnVal < 0 ? ' negative' : '');
+    } else {
+        avgReturn.textContent = '--';
+    }
+    
+    totalSignals.textContent = performanceStats.total_signals;
+}
+
+function renderSignalHistory() {
+    const tbody = document.getElementById('signal-history-body');
+    
+    if (!signalHistory || signalHistory.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="8" style="text-align: center; padding: 2rem; color: var(--text-secondary);">
+                    No signal history yet. Signals will be recorded over time.
+                </td>
+            </tr>
+        `;
+        return;
+    }
+    
+    tbody.innerHTML = signalHistory.map(s => {
+        const timestamp = new Date(s.timestamp);
+        const timeStr = timestamp.toLocaleDateString() + ' ' + timestamp.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+        
+        const return24h = s.return_24h !== null 
+            ? `<span class="${s.return_24h >= 0 ? 'return-positive' : 'return-negative'}">${s.return_24h >= 0 ? '+' : ''}${s.return_24h.toFixed(2)}%</span>`
+            : '<span style="color: var(--text-secondary);">--</span>';
+        
+        const return7d = s.return_7d !== null 
+            ? `<span class="${s.return_7d >= 0 ? 'return-positive' : 'return-negative'}">${s.return_7d >= 0 ? '+' : ''}${s.return_7d.toFixed(2)}%</span>`
+            : '<span style="color: var(--text-secondary);">--</span>';
+        
+        let statusClass = 'pending';
+        let statusText = 'Pending';
+        if (s.outcome_status === 'complete') {
+            statusClass = 'complete';
+            statusText = 'Complete';
+        } else if (s.outcome_status === 'partial') {
+            statusClass = 'partial';
+            statusText = '24h Done';
+        }
+        
+        return `
+            <tr>
+                <td class="font-mono" style="font-size: 0.8rem;">${timeStr}</td>
+                <td>
+                    <div>${s.name || 'Subnet ' + s.netuid}</div>
+                    <div class="subnet-symbol">SN${s.netuid}</div>
+                </td>
+                <td><span class="signal-badge ${getSignalClass(s.signal)}">${getSignalEmoji(s.signal)} ${s.signal.replace(/_/g, ' ')}</span></td>
+                <td class="font-mono">${s.score.toFixed(1)}</td>
+                <td class="font-mono">${formatPrice(s.price_at_signal)} τ</td>
+                <td>${return24h}</td>
+                <td>${return7d}</td>
+                <td><span class="status-badge-small ${statusClass}">${statusText}</span></td>
+            </tr>
+        `;
+    }).join('');
 }
 
 // ==================== Event Handlers ====================
